@@ -1,1 +1,2 @@
-OPEN62541 = ..\..\..\..\open62541\master
+OPEN62541 = $(SUPPORT)/open62541/master/install
+OPEN62541_DEPLOY_MODE = PROVIDED

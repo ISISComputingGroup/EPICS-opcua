@@ -27,7 +27,13 @@
 #MYMODULE = $(MODULES)/my-module
 
 # Google Test / Google Mock
-GTEST = /path/to/gtest/module
+GTEST = $(SUPPORT)/googletest/master
+
+LIBXML2 = $(SUPPORT)/libxml2/master
+LIBXML2_DIR = $(SUPPORT)/libxml2/master/lib/$(EPICS_HOST_ARCH)
+OPENSSL = $(SUPPORT)/openssl/master
+ICONV = $(SUPPORT)/libiconv/master
+ICONV_DIR = $(SUPPORT)/libiconv/master/lib/$(EPICS_HOST_ARCH)
 
 # EPICS_BASE should appear last so earlier modules can override stuff:
 EPICS_BASE = /path/to/epics/base
@@ -42,3 +48,5 @@ EPICS_BASE = /path/to/epics/base
 -include $(TOP)/../configure/RELEASE.local
 -include $(TOP)/configure/RELEASE.local
 
+include $(TOP)/../../../ISIS_CONFIG
+-include $(TOP)/../../../ISIS_CONFIG.$(EPICS_HOST_ARCH)
