@@ -1,3 +1,5 @@
+@echo off
 setlocal
-call %~dp0exampleTop\iocBoot\iocUaDemoServer\dllPath.bat
+set "PATH=%~dp0bin\%EPICS_HOST_ARCH%;%PATH%"
+make
 make runtests
