@@ -8,6 +8,7 @@
 /include/
 /templates/
 envPaths
+dllPath.bat
 
 # EPICS installation dirs in *Top
 /*Top/cfg/
