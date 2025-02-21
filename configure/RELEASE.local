@@ -1,1 +1,12 @@
-EPICS_BASE = C:/Instrument/Apps/EPICS/base/master
+
+# Google Test / Google Mock
+GTEST = $(SUPPORT)/googletest/master
+
+LIBXML2 = $(SUPPORT)/libxml2/master
+LIBXML2_DIR = $(SUPPORT)/libxml2/master/lib/$(EPICS_HOST_ARCH)
+OPENSSL = $(SUPPORT)/OpenSSL/master
+ICONV = $(SUPPORT)/libiconv/master
+ICONV_DIR = $(SUPPORT)/libiconv/master/lib/$(EPICS_HOST_ARCH)
+
+include $(TOP)/../../../ISIS_CONFIG
+-include $(TOP)/../../../ISIS_CONFIG.$(EPICS_HOST_ARCH)
