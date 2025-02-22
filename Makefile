@@ -2,15 +2,6 @@
 TOP = .
 include $(TOP)/configure/CONFIG
 
-# set PATH on windows so can run gtest code
-BINPATH = $(abspath $(TOP)/bin/$(EPICS_HOST_ARCH))
-ifneq ($(findstring windows,$(EPICS_HOST_ARCH)),)
-export PATH := $(subst /,\,$(BINPATH));$(PATH)
-endif
-ifneq ($(findstring win32,$(EPICS_HOST_ARCH)),)
-export PATH := $(subst /,\,$(BINPATH));$(PATH)
-endif
-
 # Directories to build, any order
 DIRS += configure
 DIRS += $(wildcard *Sup)
