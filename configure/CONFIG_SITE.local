@@ -1,2 +1,5 @@
 OPEN62541 = $(SUPPORT)/open62541/master/install/$(EPICS_HOST_ARCH)
 OPEN62541_DEPLOY_MODE = PROVIDED
+ifneq ($(findstring linux-x86_64,$(EPICS_HOST_ARCH)),)
+OPEN62541_LIB_DIR = $(OPEN62541)/lib64
+endif
