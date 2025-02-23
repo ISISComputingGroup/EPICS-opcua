@@ -83,6 +83,12 @@ $(foreach SDK,$(SUPPORTED_SDKS),$(info $(SDK) = $(firstword $($(SDK)) -nil-)))
 $(error ====== CONFIGURATION ERROR ======)
 endif
 
+ifeq ($(findstring static,$(EPICS_HOST_ARCH)),)
+BIN_INSTALLS_WIN32 += $(wildcard $(OPENSSL)/bin/$(EPICS_HOST_ARCH)/*.dll)
+BIN_INSTALLS_WIN32 += $(wildcard $(LIBXML2)/bin/$(EPICS_HOST_ARCH)/*.dll)
+BIN_INSTALLS_WIN32 += $(wildcard $(ICONV)/bin/$(EPICS_HOST_ARCH)/*.dll)
+endif
+
 # Unified Automation C++ Based OPC UA Client SDK
 ifdef UASDK
 include $(OPCUA)/UaSdk/Makefile.config
@@ -91,6 +97,9 @@ endif
 # open62541 project
 ifdef OPEN62541
 include $(OPCUA)/open62541/Makefile.config
+ifeq ($(findstring static,$(EPICS_HOST_ARCH)),)
+BIN_INSTALLS_WIN32 += $(OPEN62541)/bin/open62541.dll
+endif
 endif
 
 # Module versioning

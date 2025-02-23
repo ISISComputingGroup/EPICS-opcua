@@ -35,6 +35,9 @@ USR_SYS_LIBS += xml2
 endif
 endif
 
+USR_LIBS_WIN32 += libcrypto zlib
+USR_SYS_LIBS_WIN32 += crypt32
+
 # Link explicitly against locally compiled library objects
 OPCUA_OBJS += linkParser iocshIntegration $($(CLIENT)_OPCUA_OBJS)
 OPCUA_OBJS += RecordConnector Session Subscription
