@@ -21,7 +21,7 @@ opcuaIoc_DBD += opcua.dbd
 # Add all the support libraries needed by this IOC
 opcuaIoc_LIBS += opcua
 
-opcuaIoc_LIBS_WIN32 += libxml2 iconv libcrypto zlib
+opcuaIoc_LIBS_WIN32 += xml2 iconv libcrypto zlib
 opcuaIoc_SYS_LIBS_WIN32 += crypt32
 
 # opcuaIoc_registerRecordDeviceDriver.cpp derives from opcuaIoc.dbd
