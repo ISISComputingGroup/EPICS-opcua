@@ -45,13 +45,18 @@ OPCUA_OBJS += RecordConnector Session Subscription
 #==================================================
 # Build tests executables
 
-GTESTPROD_HOST += UpdateTest
-UpdateTest_SRCS += UpdateTest.cpp
-GTESTS += UpdateTest
+# with 32bit image on 64bit windows there is an issue with
+# program names that contain the word update in them in that they
+# automatically result in an admin prompt via UAC
+# This is due to Installer Detection Technology
+# See https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-vista/cc709628(v=ws.10)?redirectedfrom=MSDN
+GTESTPROD_HOST += UpdatTest
+UpdatTest_SRCS += UpdateTest.cpp
+GTESTS += UpdatTest
 
-GTESTPROD_HOST += UpdateQueueTest
-UpdateQueueTest_SRCS += UpdateQueueTest.cpp
-GTESTS += UpdateQueueTest
+GTESTPROD_HOST += UpdatQueueTest
+UpdatQueueTest_SRCS += UpdateQueueTest.cpp
+GTESTS += UpdatQueueTest
 
 GTESTPROD_HOST += RequestQueueBatcherTest
 RequestQueueBatcherTest_SRCS += RequestQueueBatcherTest.cpp
