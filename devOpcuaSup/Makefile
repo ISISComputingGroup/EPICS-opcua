@@ -100,6 +100,7 @@ include $(OPCUA)/open62541/Makefile.config
 ifeq ($(findstring static,$(EPICS_HOST_ARCH)),)
 BIN_INSTALLS_WIN32 += $(OPEN62541)/bin/open62541.dll
 endif
+BIN_INSTALLS_WIN32 += $(OPEN62541)/bin/ua.exe
 endif
 
 # Module versioning
