@@ -30,7 +30,7 @@ OPCUA = $(TOP)/devOpcuaSup
 SRC_DIRS += $(OPCUA)
 
 ifeq ($(shell git rev-parse --is-inside-work-tree),true)
-  EPICS_OPCUA_GIT_COMMIT := $(shell git describe --long --dirty)
+  EPICS_OPCUA_GIT_COMMIT := $(shell git describe --long --dirty --always)
 else
   EPICS_OPCUA_GIT_COMMIT := -
 endif
