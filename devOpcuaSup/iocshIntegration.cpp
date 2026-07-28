@@ -20,6 +20,10 @@
 #include <cstdlib>
 #include <regex>
 #include <winsock2.h>
+// cannot use : to separate command line arguments as it matches C: in file paths
+#define ARGSEP ';'
+#else
+#define ARGSEP ':'
 #endif
 
 #include <iocsh.h>
@@ -148,7 +152,7 @@ opcuaSessionCallFunc(const iocshArgBuf *args)
 
         std::list<std::pair<std::string, std::string>> setopts;
         for (int i = 1; i < args[2].aval.ac; i++) {
-            auto options = splitString(args[2].aval.av[i], ':');
+            auto options = splitString(args[2].aval.av[i], ARGSEP);
             for (auto &opt : options) {
                 if (opt.empty()) continue;
                 auto keyval = splitString(opt, '=');
@@ -253,7 +257,7 @@ static
 
         std::list<std::pair<std::string, std::string>> setopts;
         for (int i = 1; i < args[3].aval.ac; i++) {
-            auto options = splitString(args[3].aval.av[i], ':');
+            auto options = splitString(args[3].aval.av[i], ARGSEP);
             for (auto &opt : options) {
                 if (opt.empty()) continue;
                 auto keyval = splitString(opt, '=');
@@ -320,7 +324,7 @@ opcuaOptionsCallFunc(const iocshArgBuf *args)
                 if (sessions.size()) {
                     foundSomething = true;
                     for (int i = 1; i < args[1].aval.ac; i++) {
-                        auto options = splitString(args[1].aval.av[i], ':');
+                        auto options = splitString(args[1].aval.av[i], ARGSEP);
                         for (auto &opt : options) {
                             if (opt.empty()) continue;
                             auto keyval = splitString(opt, '=');
@@ -339,7 +343,7 @@ opcuaOptionsCallFunc(const iocshArgBuf *args)
                     if (subscriptions.size()) {
                         foundSomething = true;
                         for (int i = 1; i < args[1].aval.ac; i++) {
-                            auto options = splitString(args[1].aval.av[i], ':');
+                            auto options = splitString(args[1].aval.av[i], ARGSEP);
                             for (auto &opt : options) {
                                 if (opt.empty()) continue;
                                 auto keyval = splitString(opt, '=');
