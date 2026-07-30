@@ -1,5 +1,5 @@
 /*************************************************************************\
-* Copyright (c) 2018-2023 ITER Organization.
+* Copyright (c) 2018-2026 ITER Organization.
 * This module is distributed subject to a Software License Agreement found
 * in file LICENSE that is included with this distribution.
 \*************************************************************************/
@@ -12,6 +12,7 @@
 
 #define epicsExportSharedSymbols
 #include "ItemOpen62541.h"
+#include "RecordConnector.h"
 #include "SubscriptionOpen62541.h"
 #include "SessionOpen62541.h"
 #include "DataElementOpen62541.h"
@@ -41,12 +42,13 @@ ItemOpen62541::ItemOpen62541(const linkInfo &info)
     , registered(false)
     , revisedSamplingInterval(0.0)
     , revisedQueueSize(0)
-    , dataTree(this)
     , dataTreeDirty(false)
+    , dataTreeNoOfNodes(0)
+    , dataTreeNoOfLeafs(0)
     , lastStatus(UA_STATUSCODE_BADSERVERNOTCONNECTED)
     , lastReason(ProcessReason::connectionLoss)
 {
-    UA_NodeId_init(&nodeid);
+    UA_NodeId_init(&nodeId);
     if (linkinfo.subscription != "" && linkinfo.monitor) {
         subscription = SubscriptionOpen62541::find(linkinfo.subscription);
         subscription->addItemOpen62541(this);
@@ -61,18 +63,18 @@ ItemOpen62541::~ItemOpen62541 ()
 {
     subscription->removeItemOpen62541(this);
     session->removeItemOpen62541(this);
-    UA_NodeId_clear(&nodeid);
+    UA_NodeId_clear(&nodeId);
 }
 
 void
 ItemOpen62541::rebuildNodeId ()
 {
     UA_UInt16 ns = session->mapNamespaceIndex(linkinfo.namespaceIndex);
-    UA_NodeId_clear(&nodeid);
+    UA_NodeId_clear(&nodeId);
     if (linkinfo.identifierIsNumeric) {
-        nodeid = UA_NODEID_NUMERIC(ns, linkinfo.identifierNumber);
+        nodeId = UA_NODEID_NUMERIC(ns, linkinfo.identifierNumber);
     } else {
-        nodeid = UA_NODEID_STRING_ALLOC(ns, linkinfo.identifierString.c_str());
+        nodeId = UA_NODEID_STRING_ALLOC(ns, linkinfo.identifierString.c_str());
     }
     registered = false;
 }
@@ -90,8 +92,8 @@ ItemOpen62541::show (int level) const
 {
     std::cout << "item"
               << " ns=";
-    if (nodeid.namespaceIndex != linkinfo.namespaceIndex)
-        std::cout << nodeid.namespaceIndex << "(" << linkinfo.namespaceIndex << ")";
+    if (nodeId.namespaceIndex != linkinfo.namespaceIndex)
+        std::cout << nodeId.namespaceIndex << "(" << linkinfo.namespaceIndex << ")";
     else
         std::cout << linkinfo.namespaceIndex;
     if (linkinfo.identifierIsNumeric)
@@ -104,6 +106,7 @@ ItemOpen62541::show (int level) const
               << " dataDirty=" << (dataTreeDirty ? "y" : "n")
               << " context=" << linkinfo.subscription << "@" << session->getName()
               << " sampling=" << revisedSamplingInterval << "(" << linkinfo.samplingInterval << ")"
+              << " deadband=" << linkinfo.deadband
               << " qsize=" << revisedQueueSize << "(" << linkinfo.queueSize << ")"
               << " cqsize=" << linkinfo.clientQueueSize
               << " discard=" << (linkinfo.discardOldest ? "old" : "new")
@@ -115,10 +118,13 @@ ItemOpen62541::show (int level) const
               << " monitor=" << (linkinfo.monitor ? "y" : "n")
               << " registered=";
     if (registered)
-        std::cout << nodeid;
-        else std::cout << "-";
-    std::cout << "(" << (linkinfo.registerNode ? "y" : "n") << ")"
-              << std::endl;
+        std::cout << nodeId;
+    else
+        std::cout << "-";
+    std::cout << "(" << (linkinfo.registerNode ? "y" : "n") << ")";
+    if (!(dataTreeNoOfNodes == 0 && dataTreeNoOfLeafs == 1))
+        std::cout << " dataNodes=" << dataTreeNoOfNodes << " dataLeafs=" << dataTreeNoOfLeafs;
+    std::cout << std::endl;
 
     if (level >= 1) {
         if (auto re = dataTree.root().lock()) {
@@ -154,7 +160,7 @@ ItemOpen62541::uaToEpicsTime (const UA_DateTime &dt, const UA_UInt16 pico10)
 }
 
 void
-ItemOpen62541::setIncomingData(const UA_DataValue &value, ProcessReason reason)
+ItemOpen62541::setIncomingData(UA_DataValue &value, ProcessReason reason)
 {
     tsClient = epicsTime::getCurrent();
     if (!UA_STATUS_IS_BAD(value.status)) {
@@ -182,6 +188,7 @@ ItemOpen62541::setIncomingData(const UA_DataValue &value, ProcessReason reason)
         if (linkinfo.timestamp == LinkOptionTimestamp::data && linkinfo.timestampElement.length())
             timefrom = &linkinfo.timestampElement;
         pd->setIncomingData(value.value, reason, timefrom);
+        value.value.storageType = UA_VARIANT_DATA_NODELETE; // take ownership of data
     }
 
     if (linkinfo.isItemRecord) {

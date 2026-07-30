@@ -13,9 +13,9 @@
 #ifndef DEVOPCUA_SESSIONOPEN62541_H
 #define DEVOPCUA_SESSIONOPEN62541_H
 
-#include "Session.h"
-#include "Registry.h"
+#include "OpcuaRegistry.h"
 #include "RequestQueueBatcher.h"
+#include "Session.h"
 
 #include <epicsMutex.h>
 #include <epicsTypes.h>
@@ -23,6 +23,8 @@
 #include <initHooks.h>
 
 #include <open62541/client.h>
+#include <Item.h>
+#include <DataElement.h>
 
 #ifndef UA_BUILTIN_TYPES_COUNT
 // Newer open62541 since version 1.3 uses type pointer
@@ -39,7 +41,31 @@
 #include <vector>
 #include <set>
 #include <map>
+#include <unordered_map>
 #include <memory>
+
+namespace std {
+
+/* Allow UA_NodeId as key */
+template<>
+struct hash<UA_NodeId>
+{
+    inline std::size_t operator()(const UA_NodeId& nodeId) const noexcept
+    {
+        return UA_NodeId_hash(&nodeId);
+    }
+};
+
+template<>
+struct equal_to<UA_NodeId>
+{
+    inline bool operator()(const UA_NodeId& nodeId1, const UA_NodeId& nodeId2) const noexcept
+    {
+        return UA_NodeId_equal(&nodeId1, &nodeId2);
+    }
+};
+
+}
 
 namespace DevOpcua {
 
@@ -78,7 +104,7 @@ std::ostream& operator << (std::ostream& os, const UA_NodeId& ua_nodeId);
 
 std::ostream& operator << (std::ostream& os, const UA_Variant &ua_variant);
 
-const char* typeKindName(UA_UInt32 typeKind);
+const char* typeKindName(int typeKind);
 
 // Open62541 has no ClientSecurityInfo structure
 // Make our own for convenience
@@ -178,12 +204,13 @@ public:
     virtual const std::string & getName() const override;
 
     /**
-     * @brief Get a structure definition from the session dictionary.
-     * @param dataTypeId data type of the extension object
-     * @return structure definition
+     * @brief Get pointer to enumChoices if typeId refers to enum type, else nullptr
      */
-//    UA_StructureDefinition structureDefinition(const UaNodeId &dataTypeId)
-//    { return puasession->structureDefinition(dataTypeId); }
+#ifdef HAS_XMLPARSER
+    const EnumChoices* getEnumChoices(const UA_NodeId* typeId);
+#else
+    const EnumChoices* getEnumChoices(const UA_NodeId* typeId) { return nullptr; }
+#endif
 
     /**
      * @brief Request a beginRead service for an item
@@ -371,6 +398,11 @@ private:
      */
     virtual void run() override;
 
+    /**
+     * @brief Initialize session after successful activation.
+     */
+    void initializeSession();
+
     // Wrapper for Session::securityPolicyString to match argument type
     static std::string securityPolicyString(const UA_String& policy)
     {
@@ -411,6 +443,7 @@ private:
     UA_SecureChannelState channelState;                           /**< status for this session */
     UA_SessionState sessionState;                                 /**< status for this session */
     UA_StatusCode connectStatus;                                  /**< status for this session */
+    bool needsInit;                                               /**< initialization needed after activation */
     unsigned int MaxNodesPerRead;                                 /**< server max number of nodes per write request */
     unsigned int MaxNodesPerWrite;                                /**< server max number of nodes per write request */
     epicsThread *workerThread;                                    /**< Asynchronous worker thread */
@@ -419,12 +452,14 @@ private:
     /** open62541 type dictionary handling */
     std::vector<UA_DataType> customTypes;                         /**< descriptions of custom (non-standard) OPC-UA types */
     std::map<std::string, UA_NodeId> binaryTypeIds;               /**< server defined binary ids of custom types */
-    std::map<std::string, std::vector<std::pair<int64_t,std::string>>> enumTypes;
+    std::unordered_map<UA_NodeId, EnumChoices> enumTypes;         /**< all the enum definitions from the server */
     void readCustomTypeDictionaries();                            /**< read custom types from the server */
     void clearCustomTypeDictionaries();                           /**< clear old custom types */
     void parseCustomDataTypes(xmlNode* node, UA_UInt16 nsIndex);  /**< parse XML representation of custom types */
     size_t getTypeIndexByName(UA_UInt16 nsIndex, const char* typeName);
     UA_StatusCode typeSystemIteratorCallback(const UA_NodeId& dictNodeId);
+    UA_StatusCode enumIteratorCallback(const UA_NodeId& childId, const UA_NodeId& referenceTypeId);
+    UA_StatusCode enumChoiceIteratorCallback(const UA_NodeId& childId, const UA_NodeId& referenceTypeId, EnumChoices& enumChoices);
     UA_StatusCode dictIteratorCallback(const UA_NodeId& childId, const UA_NodeId& referenceTypeId);
     UA_StatusCode typeIteratorCallback(const UA_NodeId& childId, const UA_NodeId& referenceTypeId, const UA_QualifiedName& typeName);
     void showCustomDataTypes(int level) const;

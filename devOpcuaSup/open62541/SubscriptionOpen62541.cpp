@@ -12,9 +12,9 @@
 
 #define epicsExportSharedSymbols
 #include "SubscriptionOpen62541.h"
-#include "DataElementOpen62541.h"
 #include "ItemOpen62541.h"
-#include "Registry.h"
+#include "OpcuaRegistry.h"
+#include "RecordConnector.h"
 #include "devOpcua.h"
 
 #include <errlog.h>
@@ -124,6 +124,13 @@ SubscriptionOpen62541::getSessionOpen62541 () const
 void
 SubscriptionOpen62541::create ()
 {
+    if (debug) {
+        std::cerr << "Subscription " << name
+                  << ": creating with interval=" << requestedSettings.requestedPublishingInterval
+                  << " lifetime=" << requestedSettings.requestedLifetimeCount
+                  << " keepalive=" << requestedSettings.requestedMaxKeepAliveCount
+                  << std::endl;
+    }
     subscriptionSettings = UA_Client_Subscriptions_create(session.client,
         requestedSettings, this, [] (UA_Client *client, UA_UInt32 subscriptionId,
             void *context, UA_StatusChangeNotification *notification) {
@@ -148,6 +155,7 @@ SubscriptionOpen62541::addMonitoredItems ()
     UA_UInt32 i;
     UA_MonitoredItemCreateRequest monitoredItemCreateRequest;
     UA_MonitoredItemCreateResult monitoredItemCreateResult;
+    UA_DataChangeFilter dataChangeFilter;
 
     if (items.size()) {
         monitoredItemCreateResult.statusCode = UA_STATUSCODE_GOOD; // suppress compiler warning
@@ -161,29 +169,40 @@ SubscriptionOpen62541::addMonitoredItems ()
             monitoredItemCreateRequest.requestedParameters.samplingInterval = it->linkinfo.samplingInterval;
             monitoredItemCreateRequest.requestedParameters.queueSize = it->linkinfo.queueSize;
             monitoredItemCreateRequest.requestedParameters.discardOldest = it->linkinfo.discardOldest;
+            if (it->linkinfo.deadband > 0.0) {
+                UA_DataChangeFilter_init(&dataChangeFilter);
+                dataChangeFilter.deadbandType = UA_DEADBANDTYPE_ABSOLUTE;
+                dataChangeFilter.deadbandValue = it->linkinfo.deadband;
+                dataChangeFilter.trigger = UA_DATACHANGETRIGGER_STATUSVALUE;
+                UA_ExtensionObject *filter = &monitoredItemCreateRequest.requestedParameters.filter;
+                filter->content.decoded.data = &dataChangeFilter;
+                filter->content.decoded.type = &UA_TYPES[UA_TYPES_DATACHANGEFILTER];
+                filter->encoding = UA_EXTENSIONOBJECT_DECODED;
+            }
             monitoredItemCreateResult = UA_Client_MonitoredItems_createDataChange(
                 session.client, subscriptionSettings.subscriptionId, UA_TIMESTAMPSTORETURN_BOTH,
-                monitoredItemCreateRequest, items[i], [] (UA_Client *client, UA_UInt32 subId, void *subContext,
+                monitoredItemCreateRequest, it, [] (UA_Client *client, UA_UInt32 subId, void *subContext,
                          UA_UInt32 monId, void *monContext, UA_DataValue *value) {
                             static_cast<SubscriptionOpen62541*>(subContext)->
                                 dataChange(monId, *static_cast<ItemOpen62541*>(monContext), value);
                          }, nullptr /* deleteCallback */);
             if (monitoredItemCreateResult.statusCode == UA_STATUSCODE_GOOD) {
-                items[i]->setRevisedSamplingInterval(monitoredItemCreateResult.revisedSamplingInterval);
-                items[i]->setRevisedQueueSize(monitoredItemCreateResult.revisedQueueSize);
-            }
-            if (debug >= 5) {
-                if (monitoredItemCreateResult.statusCode == UA_STATUSCODE_GOOD)
-                    std::cout << "** Monitored item " << monitoredItemCreateRequest.itemToMonitor.nodeId
+                it->setRevisedSamplingInterval(monitoredItemCreateResult.revisedSamplingInterval);
+                it->setRevisedQueueSize(monitoredItemCreateResult.revisedQueueSize);
+                if (debug >= 5) {
+                    std::cout << "** OPC UA record " << it->recConnector->getRecordName()
+                              << " monitored item " << monitoredItemCreateRequest.itemToMonitor.nodeId
                               << " succeeded with id " << monitoredItemCreateResult.monitoredItemId
                               << " revised sampling interval " << monitoredItemCreateResult.revisedSamplingInterval
                               << " revised queue size " << monitoredItemCreateResult.revisedQueueSize
                               << std::endl;
-                else
-                    std::cout << "** Monitored item " << monitoredItemCreateRequest.itemToMonitor.nodeId
-                              << " failed with error "
-                              << UA_StatusCode_name(monitoredItemCreateResult.statusCode)
-                              << std::endl;
+                }
+            } else {
+                std::cerr << "OPC UA record " << it->recConnector->getRecordName()
+                          << " monitored item " << monitoredItemCreateRequest.itemToMonitor.nodeId
+                          << " failed with error " << UA_StatusCode_name(monitoredItemCreateResult.statusCode)
+                          << std::endl;
+                it->setIncomingEvent(ProcessReason::connectionLoss);
             }
             i++;
         }

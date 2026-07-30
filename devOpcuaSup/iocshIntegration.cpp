@@ -26,14 +26,15 @@
 #include <errlog.h>
 #include <epicsThread.h>
 
-#include <epicsExport.h>  // defines epicsExportSharedSymbols
+#include <epicsExport.h> // defines epicsExportSharedSymbols
+
+#include "OpcuaRegistry.h"
+#include "RecordConnector.h"
+#include "Session.h"
+#include "Subscription.h"
 #include "devOpcua.h"
 #include "iocshVariables.h"
 #include "linkParser.h"
-#include "Session.h"
-#include "Subscription.h"
-#include "Registry.h"
-#include "RecordConnector.h"
 
 namespace DevOpcua {
 
@@ -311,7 +312,6 @@ opcuaOptionsCallFunc(const iocshArgBuf *args)
         } else if (strcmp(args[0].sval, "help") == 0) {
             std::cout << opcuaOptionsUsage.c_str() << std::endl;
         } else {
-            std::cerr << args[1].aval.ac << " options: " << args[1].aval.av[0] << std::endl;
             if (args[1].aval.ac <= 1) {
                 errlogPrintf("missing argument #2 (options)\n");
             } else {
@@ -1107,8 +1107,6 @@ void opcuaIocshRegister ()
     iocshRegister(&opcuaShowDataFuncDef, opcuaShowDataCallFunc);
 }
 
-extern "C" {
-epicsExportRegistrar(opcuaIocshRegister);
-}
-
 } // namespace
+
+extern "C" { epicsExportRegistrar(opcuaIocshRegister); }

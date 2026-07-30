@@ -79,24 +79,25 @@ OPEN62541_USE_XMLPARSER = YES'''.format(installdir))
     if cue.ci['os'] == 'windows':
         if cue.ci['compiler'] == 'gcc':
             generator = 'MinGW Makefiles'
-        elif cue.ci['compiler'] == 'vs2019':
-            generator = 'Visual Studio 16 2019'
+        elif cue.ci['compiler'] == 'vs2022':
+            generator = 'Visual Studio 17 2022'
 
     build_shared = 'ON'
     if cue.ci['static']:
         build_shared = 'OFF'
 
-    if ver[0] == '1' and ver[1] == '3':
-        sp.check_call(['patch', '-p1', '-i', os.path.join(curdir, '.ci-local', 'open62541-1.3.patch')], cwd=sdkdir)
+    cmake_args = ['cmake', '..',
+                  '-G', generator,
+                  '-DBUILD_SHARED_LIBS={0}'.format(build_shared),
+                  '-DCMAKE_BUILD_TYPE=RelWithDebInfo',
+                  '-DUA_ENABLE_ENCRYPTION=OPENSSL',
+                  '-DUA_ENABLE_ENCRYPTION_OPENSSL=ON',
+                  '-DCMAKE_INSTALL_PREFIX={0}'.format(installdir)]
 
-    sp.check_call(['cmake', '..',
-                   '-G', generator,
-                   '-DBUILD_SHARED_LIBS={0}'.format(build_shared),
-                   '-DCMAKE_BUILD_TYPE=RelWithDebInfo',
-                   '-DUA_ENABLE_ENCRYPTION=OPENSSL',
-                   '-DUA_ENABLE_ENCRYPTION_OPENSSL=ON',
-                   '-DCMAKE_INSTALL_PREFIX={0}'.format(installdir)],
-                   cwd=builddir)
+    if cue.ci['os'] == 'windows' and cue.ci['compiler'] == 'gcc':
+        cmake_args.append('-DCMAKE_C_FLAGS=-Wno-error=jump-misses-init')
+
+    sp.check_call(cmake_args, cwd=builddir)
 
     sp.check_call(['cmake', '--build', '.', '--config', 'RelWithDebInfo'], cwd=builddir)
     sp.check_call(['cmake', '--install', '.', '--config', 'RelWithDebInfo'], cwd=builddir)

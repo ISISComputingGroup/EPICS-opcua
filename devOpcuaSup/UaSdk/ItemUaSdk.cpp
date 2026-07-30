@@ -1,5 +1,5 @@
 /*************************************************************************\
-* Copyright (c) 2018-2021 ITER Organization.
+* Copyright (c) 2018-2026 ITER Organization.
 * This module is distributed subject to a Software License Agreement found
 * in file LICENSE that is included with this distribution.
 \*************************************************************************/
@@ -11,41 +11,44 @@
  *  and example code from the Unified Automation C++ Based OPC UA Client SDK
  */
 
+#include "ItemUaSdk.h"
+
 #include <iostream>
 #include <memory>
 
+#include <opcua_statuscodes.h>
 #include <uaclientsdk.h>
 #include <uanodeid.h>
-#include <opcua_statuscodes.h>
 
-#include "devOpcua.h"
-#include "RecordConnector.h"
-#include "opcuaItemRecord.h"
-#include "ItemUaSdk.h"
-#include "SubscriptionUaSdk.h"
-#include "SessionUaSdk.h"
 #include "DataElementUaSdk.h"
+#include "RecordConnector.h"
+#include "SessionUaSdk.h"
+#include "SubscriptionUaSdk.h"
+#include "devOpcua.h"
+#include "opcuaItemRecord.h"
 
-namespace DevOpcua {
+namespace DevOpcua
+{
 
 using namespace UaClientSdk;
 
 /* Specific implementation of Item's factory method */
 Item *
-Item::newItem(const linkInfo &info)
+Item::newItem (const linkInfo &info)
 {
     return new ItemUaSdk(info);
 }
 
-ItemUaSdk::ItemUaSdk(const linkInfo &info)
+ItemUaSdk::ItemUaSdk (const linkInfo &info)
     : Item(info)
     , subscription(nullptr)
     , session(nullptr)
     , registered(false)
     , revisedSamplingInterval(0.0)
     , revisedQueueSize(0)
-    , dataTree(this)
     , dataTreeDirty(false)
+    , dataTreeNoOfNodes(0)
+    , dataTreeNoOfLeafs(0)
     , lastStatus(OpcUa_BadServerNotConnected)
     , lastReason(ProcessReason::connectionLoss)
 {
@@ -78,7 +81,7 @@ ItemUaSdk::rebuildNodeId ()
 }
 
 void
-ItemUaSdk::requestWriteIfDirty()
+ItemUaSdk::requestWriteIfDirty ()
 {
     Guard G(dataTreeWriteLock);
     if (dataTreeDirty)
@@ -100,21 +103,21 @@ ItemUaSdk::show (int level) const
         std::cout << ";s=" << linkinfo.identifierString;
     std::cout << " record=" << recConnector->getRecordName()
               << " state=" << connectionStatusString(recConnector->state())
-              << " status=" << UaStatus(lastStatus).toString().toUtf8()
-              << " dataDirty=" << (dataTreeDirty ? "y" : "n")
+              << " status=" << UaStatus(lastStatus).toString().toUtf8() << " dataDirty=" << (dataTreeDirty ? "y" : "n")
               << " context=" << linkinfo.subscription << "@" << session->getName()
               << " sampling=" << revisedSamplingInterval << "(" << linkinfo.samplingInterval << ")"
-              << " qsize=" << revisedQueueSize << "(" << linkinfo.queueSize << ")"
-              << " cqsize=" << linkinfo.clientQueueSize
-              << " discard=" << (linkinfo.discardOldest ? "old" : "new")
+              << " deadband=" << linkinfo.deadband << " qsize=" << revisedQueueSize << "(" << linkinfo.queueSize << ")"
+              << " cqsize=" << linkinfo.clientQueueSize << " discard=" << (linkinfo.discardOldest ? "old" : "new")
               << " timestamp=" << linkOptionTimestampString(linkinfo.timestamp);
     if (linkinfo.timestamp == LinkOptionTimestamp::data)
         std::cout << "@" << linkinfo.timestampElement;
-    std::cout << " bini=" << linkOptionBiniString(linkinfo.bini)
-              << " output=" << (linkinfo.isOutput ? "y" : "n")
+    std::cout << " bini=" << linkOptionBiniString(linkinfo.bini) << " output=" << (linkinfo.isOutput ? "y" : "n")
               << " monitor=" << (linkinfo.monitor ? "y" : "n")
               << " registered=" << (registered ? nodeid->toString().toUtf8() : "-") << "("
-              << (linkinfo.registerNode ? "y" : "n") << ")" << std::endl;
+              << (linkinfo.registerNode ? "y" : "n") << ")";
+    if (!(dataTreeNoOfNodes == 0 && dataTreeNoOfLeafs == 1))
+        std::cout << " dataNodes=" << dataTreeNoOfNodes << " dataLeafs=" << dataTreeNoOfLeafs;
+    std::cout << std::endl;
 
     if (level >= 1) {
         if (auto re = dataTree.root().lock()) {
@@ -124,13 +127,14 @@ ItemUaSdk::show (int level) const
     }
 }
 
-int ItemUaSdk::debug() const
+int
+ItemUaSdk::debug () const
 {
     return recConnector->debug();
 }
 
 void
-ItemUaSdk::copyAndClearOutgoingData(_OpcUa_WriteValue &wvalue)
+ItemUaSdk::copyAndClearOutgoingData (_OpcUa_WriteValue &wvalue)
 {
     Guard G(dataTreeWriteLock);
     if (auto pd = dataTree.root().lock()) {
@@ -145,12 +149,12 @@ ItemUaSdk::uaToEpicsTime (const UaDateTime &dt, const OpcUa_UInt16 pico10)
 {
     epicsTimeStamp ts;
     ts.secPastEpoch = static_cast<epicsUInt32>(dt.toTime_t()) - POSIX_TIME_AT_EPICS_EPOCH;
-    ts.nsec         = static_cast<epicsUInt32>(static_cast<OpcUa_Int64>(dt) % UA_SECS_TO_100NS) * 100 + pico10 / 100;
+    ts.nsec = static_cast<epicsUInt32>(static_cast<OpcUa_Int64>(dt) % UA_SECS_TO_100NS) * 100 + pico10 / 100;
     return epicsTime(ts);
 }
 
 void
-ItemUaSdk::setIncomingData(const OpcUa_DataValue &value, ProcessReason reason)
+ItemUaSdk::setIncomingData (const OpcUa_DataValue &value, ProcessReason reason, const UaNodeId *typeId)
 {
     tsClient = epicsTime::getCurrent();
     if (OpcUa_IsNotBad(value.StatusCode)) {
@@ -177,13 +181,12 @@ ItemUaSdk::setIncomingData(const OpcUa_DataValue &value, ProcessReason reason)
         const std::string *timefrom = nullptr;
         if (linkinfo.timestamp == LinkOptionTimestamp::data && linkinfo.timestampElement.length())
             timefrom = &linkinfo.timestampElement;
-        pd->setIncomingData(value.Value, reason, timefrom);
+        pd->setIncomingData(value.Value, reason, timefrom, typeId);
     }
 
     if (linkinfo.isItemRecord) {
-        if (recConnector->state() == ConnectionStatus::initialRead
-                && reason == ProcessReason::readComplete
-                && recConnector->bini() == LinkOptionBini::write) {
+        if (recConnector->state() == ConnectionStatus::initialRead && reason == ProcessReason::readComplete
+            && recConnector->bini() == LinkOptionBini::write) {
             recConnector->setState(ConnectionStatus::initialWrite);
             recConnector->requestRecordProcessing(ProcessReason::writeRequest);
         } else {
@@ -193,7 +196,7 @@ ItemUaSdk::setIncomingData(const OpcUa_DataValue &value, ProcessReason reason)
 }
 
 void
-ItemUaSdk::setIncomingEvent(const ProcessReason reason)
+ItemUaSdk::setIncomingEvent (const ProcessReason reason)
 {
     tsClient = epicsTime::getCurrent();
     setReason(reason);
@@ -214,15 +217,17 @@ ItemUaSdk::setIncomingEvent(const ProcessReason reason)
 }
 
 void
-ItemUaSdk::setState(const ConnectionStatus state)
+ItemUaSdk::setState (const ConnectionStatus state)
 {
     if (auto pd = dataTree.root().lock()) {
         pd->setState(state);
     }
+    if (linkinfo.isItemRecord)
+        recConnector->setState(state);
 }
 
 void
-ItemUaSdk::markAsDirty()
+ItemUaSdk::markAsDirty ()
 {
     if (recConnector->plinkinfo->isItemRecord) {
         Guard G(dataTreeWriteLock);
@@ -235,12 +240,12 @@ ItemUaSdk::markAsDirty()
 }
 
 void
-ItemUaSdk::getStatus(epicsUInt32 *code, char *text, const epicsUInt32 len, epicsTimeStamp *ts)
+ItemUaSdk::getStatus (epicsUInt32 *code, char *text, const epicsUInt32 len, epicsTimeStamp *ts)
 {
     *code = lastStatus.code();
     if (text && len) {
         strncpy(text, lastStatus.toString().toUtf8(), len);
-        text[len-1] = '\0';
+        text[len - 1] = '\0';
     }
 
     if (ts && recConnector) {
