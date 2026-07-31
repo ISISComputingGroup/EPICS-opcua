@@ -190,6 +190,8 @@ public:
     DataElementUaSdk(const std::string &name,
                      ItemUaSdk *item);
 
+    ~DataElementUaSdk() { delete enumChoices; }
+
     /**
      * @brief Create a DataElement and add it to the item's dataTree.
      *
@@ -238,10 +240,12 @@ public:
      * @param value  new value for this data element
      * @param reason  reason for this value update
      * @param timefrom  name of element to read item timestamp from
+     * @param typeId  data type of the data element
      */
     void setIncomingData(const UaVariant &value,
                          ProcessReason reason,
-                         const std::string *timefrom = nullptr);
+                         const std::string *timefrom = nullptr,
+                         const UaNodeId *typeId = nullptr);
 
     /**
      * @brief Push an incoming event into the DataElement.
@@ -327,9 +331,10 @@ public:
      * DevOpcua::DataElement::readScalar(char*,const size_t,dbCommon*,ProcessReason*,epicsUInt32*,char*,const epicsUInt32)
      */
 
-    virtual long int readScalar(char *value, const size_t num,
+    virtual long int readScalar(char *value, const epicsUInt32 len,
                                 dbCommon *prec,
                                 ProcessReason *nextReason = nullptr,
+                                epicsUInt32 *lenRead = nullptr,
                                 epicsUInt32 *statusCode = nullptr,
                                 char *statusText = nullptr,
                                 const epicsUInt32 statusTextLen = MAX_STRING_SIZE+1) override;
@@ -480,7 +485,7 @@ public:
      * See the DataElement API method it overrides
      * DevOpcua::DataElement::readArray(char*,const epicsUInt32,const epicsUInt32,epicsUInt32*,dbCommon*,ProcessReason*,epicsUInt32*,char*,const epicsUInt32)
      */
-    virtual long int readArray(char *value, const epicsUInt32 len,
+    virtual long int readArray(char *value, epicsUInt32 len,
                                const epicsUInt32 num,
                                epicsUInt32 *numRead,
                                dbCommon *prec,
@@ -641,7 +646,7 @@ public:
      * See the DataElement API method it overrides
      * DevOpcua::DataElement::writeArray(const char*,const epicsUInt32,dbCommon*)
      */
-    virtual long int writeArray(const char *value, const epicsUInt32 len,
+    virtual long int writeArray(const char *value, epicsUInt32 len,
                                 const epicsUInt32 num,
                                 dbCommon *prec) override;
 
@@ -679,9 +684,10 @@ private:
                       const std::string &targetTypeName) const;
     void checkWriteArray(OpcUa_BuiltInType expectedType, const std::string &targetTypeName) const;
     void dbgWriteArray(const epicsUInt32 targetSize, const std::string &targetTypeName) const;
-    bool updateDataInGenericValue(UaGenericStructureValue &value,
-                                  const int index,
-                                  std::shared_ptr<DataElementUaSdk> pelem);
+    void createMap(const UaStructureDefinition& definition, const std::string *timefrom = nullptr);
+    void createMap(const UaLocalizedText&);
+    void createMap(const UaQualifiedName&);
+
     // Structure always returns true to ensure full traversal
     bool isDirty() const { return isdirty || !isleaf; }
     void
@@ -728,18 +734,7 @@ private:
     OpcUa_StatusCode UaVariant_to(const UaVariant &variant, OpcUa_Int64 &value) { return variant.toInt64(value); }
     OpcUa_StatusCode UaVariant_to(const UaVariant &variant, OpcUa_Double &value) { return variant.toDouble(value); }
 
-    OpcUa_StatusCode UaVariant_to(const UaVariant &variant, UaSByteArray &value) { return variant.toSByteArray(value); }
-    OpcUa_StatusCode UaVariant_to(const UaVariant &variant, UaByteArray &value) { return variant.toByteArray(value); }
-    OpcUa_StatusCode UaVariant_to(const UaVariant &variant, UaInt16Array &value) { return variant.toInt16Array(value); }
-    OpcUa_StatusCode UaVariant_to(const UaVariant &variant, UaUInt16Array &value) { return variant.toUInt16Array(value); }
-    OpcUa_StatusCode UaVariant_to(const UaVariant &variant, UaInt32Array &value) { return variant.toInt32Array(value); }
-    OpcUa_StatusCode UaVariant_to(const UaVariant &variant, UaUInt32Array &value) { return variant.toUInt32Array(value); }
-    OpcUa_StatusCode UaVariant_to(const UaVariant &variant, UaInt64Array &value) { return variant.toInt64Array(value); }
-    OpcUa_StatusCode UaVariant_to(const UaVariant &variant, UaUInt64Array &value) { return variant.toUInt64Array(value); }
-    OpcUa_StatusCode UaVariant_to(const UaVariant &variant, UaFloatArray &value) { return variant.toFloatArray(value); }
-    OpcUa_StatusCode UaVariant_to(const UaVariant &variant, UaDoubleArray &value) { return variant.toDoubleArray(value); }
-    OpcUa_StatusCode UaVariant_to(const UaVariant &variant, UaStringArray &value) { return variant.toStringArray(value); }
-
+    void UaVariant_set(UaVariant &variant, UaBooleanArray &value) { variant.setBoolArray(value, OpcUa_True); }
     void UaVariant_set(UaVariant &variant, UaSByteArray &value) { variant.setSByteArray(value, OpcUa_True); }
     void UaVariant_set(UaVariant &variant, UaByteArray &value) { variant.setByteArray(value, OpcUa_True); }
     void UaVariant_set(UaVariant &variant, UaInt16Array &value) { variant.setInt16Array(value, OpcUa_True); }
@@ -751,6 +746,9 @@ private:
     void UaVariant_set(UaVariant &variant, UaFloatArray &value) { variant.setFloatArray(value, OpcUa_True); }
     void UaVariant_set(UaVariant &variant, UaDoubleArray &value) { variant.setDoubleArray(value, OpcUa_True); }
     void UaVariant_set(UaVariant &variant, UaStringArray &value) { variant.setStringArray(value, OpcUa_True); }
+    void UaVariant_set(UaVariant &variant, UaXmlElementArray &value) { variant.setXmlElementArray(value, OpcUa_True); }
+    void UaVariant_set(UaVariant &variant, UaLocalizedTextArray &value) { variant.setLocalizedTextArray(value, OpcUa_True); }
+    void UaVariant_set(UaVariant &variant, UaQualifiedNameArray &value) { variant.setQualifiedNameArray(value, OpcUa_True); }
 
     // Read scalar value as templated function on EPICS type and OPC UA type
     // value == nullptr is allowed and leads to the value being dropped (ignored),
@@ -831,7 +829,7 @@ private:
     // Read array value as templated function on EPICS type and OPC UA type
     // (latter *must match* OPC UA type enum argument)
     // CAVEAT: changes must also be reflected in specializations (in DataElementUaSdk.cpp)
-    template<typename ET, typename OT>
+    template<typename ET>
     long
     readArray (ET *value, const epicsUInt32 num,
                epicsUInt32 *numRead,
@@ -875,25 +873,25 @@ private:
                     ret = 1;
                 } else {
                     // Valid OPC UA value, so try to convert
-                    UaVariant &data = upd->getData();
-                    if (!data.isArray()) {
+                    UaVariant &variant = upd->getData();
+                    if (!variant.isArray()) {
                         errlogPrintf("%s : incoming data is not an array\n", prec->name);
                         (void) recGblSetSevr(prec, READ_ALARM, INVALID_ALARM);
                         ret = 1;
-                    } else if (data.type() != expectedType) {
+                    } else if (variant.type() != expectedType) {
                         errlogPrintf("%s : incoming data type (%s) does not match EPICS array type (%s)\n",
-                                     prec->name, variantTypeString(data.type()), epicsTypeString(*value));
+                                     prec->name, variantTypeString(variant.type()), epicsTypeString(*value));
                         (void) recGblSetSevr(prec, READ_ALARM, INVALID_ALARM);
                         ret = 1;
                     } else {
                         if (OpcUa_IsUncertain(stat)) {
                             (void) recGblSetSevr(prec, READ_ALARM, MINOR_ALARM);
                         }
-                        OT arr;
-                        UaVariant_to(upd->getData(), arr);
-                        elemsWritten = num < arr.length() ? num : arr.length();
-                        memcpy(value, arr.rawData(), sizeof(ET) * elemsWritten);
-                        prec->udf = false;
+                        elemsWritten = variant.arraySize();
+                        if (elemsWritten > num)
+                            elemsWritten = num;
+                        memcpy(value, static_cast<const OpcUa_Variant*>(variant)
+                                ->Value.Array.Value.Array, sizeof(ET) * elemsWritten);
                     }
                 }
                 if (statusCode) *statusCode = stat;
@@ -917,7 +915,7 @@ private:
 
     // Read array value for EPICS String / OpcUa_String
     long
-    readArray (char *value, const epicsUInt32 len,
+    readArray (char *value, epicsUInt32 len,
                const epicsUInt32 num,
                epicsUInt32 *numRead,
                OpcUa_BuiltInType expectedType,
@@ -933,17 +931,15 @@ private:
     writeScalar (const ET &value,
                  dbCommon *prec)
     {
-        long ret = 0;
+        long ret = 1;
 
         switch (incomingData.type()) {
         case OpcUaType_Boolean:
         { // Scope of Guard G
             Guard G(outgoingLock);
-            if (value == 0)
-                outgoingData.setBoolean(false);
-            else
-                outgoingData.setBoolean(true);
+            outgoingData.setBoolean(value != 0);
             markAsDirty();
+            ret = 0;
             break;
         }
         case OpcUaType_Byte:
@@ -951,9 +947,7 @@ private:
                 Guard G(outgoingLock);
                 outgoingData.setByte(static_cast<OpcUa_Byte>(value));
                 markAsDirty();
-            } else {
-                (void) recGblSetSevr(prec, WRITE_ALARM, INVALID_ALARM);
-                ret = 1;
+                ret = 0;
             }
             break;
         case OpcUaType_SByte:
@@ -961,9 +955,7 @@ private:
                 Guard G(outgoingLock);
                 outgoingData.setSByte(static_cast<OpcUa_SByte>(value));
                 markAsDirty();
-            } else {
-                (void) recGblSetSevr(prec, WRITE_ALARM, INVALID_ALARM);
-                ret = 1;
+                ret = 0;
             }
             break;
         case OpcUaType_UInt16:
@@ -971,9 +963,7 @@ private:
                 Guard G(outgoingLock);
                 outgoingData.setUInt16(static_cast<OpcUa_UInt16>(value));
                 markAsDirty();
-            } else {
-                (void) recGblSetSevr(prec, WRITE_ALARM, INVALID_ALARM);
-                ret = 1;
+                ret = 0;
             }
             break;
         case OpcUaType_Int16:
@@ -981,9 +971,7 @@ private:
                 Guard G(outgoingLock);
                 outgoingData.setInt16(static_cast<OpcUa_Int16>(value));
                 markAsDirty();
-            } else {
-                (void) recGblSetSevr(prec, WRITE_ALARM, INVALID_ALARM);
-                ret = 1;
+                ret = 0;
             }
             break;
         case OpcUaType_UInt32:
@@ -991,19 +979,17 @@ private:
                 Guard G(outgoingLock);
                 outgoingData.setUInt32(static_cast<OpcUa_UInt32>(value));
                 markAsDirty();
-            } else {
-                (void) recGblSetSevr(prec, WRITE_ALARM, INVALID_ALARM);
-                ret = 1;
+                ret = 0;
             }
             break;
-        case OpcUaType_Int32:
-            if (isWithinRange<OpcUa_Int32>(value)) {
+        case OpcUaType_Int32: // may be an enum
+            if (isWithinRange<OpcUa_Int32>(value) &&
+                (!enumChoices ||
+                    enumChoices->find(static_cast<OpcUa_Int32>(value)) != enumChoices->end())) {
                 Guard G(outgoingLock);
                 outgoingData.setInt32(static_cast<OpcUa_Int32>(value));
                 markAsDirty();
-            } else {
-                (void) recGblSetSevr(prec, WRITE_ALARM, INVALID_ALARM);
-                ret = 1;
+                ret = 0;
             }
             break;
         case OpcUaType_UInt64:
@@ -1011,9 +997,7 @@ private:
                 Guard G(outgoingLock);
                 outgoingData.setUInt64(static_cast<OpcUa_UInt64>(value));
                 markAsDirty();
-            } else {
-                (void) recGblSetSevr(prec, WRITE_ALARM, INVALID_ALARM);
-                ret = 1;
+                ret = 0;
             }
             break;
         case OpcUaType_Int64:
@@ -1021,9 +1005,7 @@ private:
                 Guard G(outgoingLock);
                 outgoingData.setInt64(static_cast<OpcUa_Int64>(value));
                 markAsDirty();
-            } else {
-                (void) recGblSetSevr(prec, WRITE_ALARM, INVALID_ALARM);
-                ret = 1;
+                ret = 0;
             }
             break;
         case OpcUaType_Float:
@@ -1031,9 +1013,7 @@ private:
                 Guard G(outgoingLock);
                 outgoingData.setFloat(static_cast<OpcUa_Float>(value));
                 markAsDirty();
-            } else {
-                (void) recGblSetSevr(prec, WRITE_ALARM, INVALID_ALARM);
-                ret = 1;
+                ret = 0;
             }
             break;
         case OpcUaType_Double:
@@ -1041,9 +1021,7 @@ private:
                 Guard G(outgoingLock);
                 outgoingData.setDouble(static_cast<OpcUa_Double>(value));
                 markAsDirty();
-            } else {
-                (void) recGblSetSevr(prec, WRITE_ALARM, INVALID_ALARM);
-                ret = 1;
+                ret = 0;
             }
             break;
         case OpcUaType_String:
@@ -1054,18 +1032,24 @@ private:
             break;
         }
         default:
-            errlogPrintf("%s : unsupported conversion for outgoing data\n",
+            errlogPrintf("%s : unsupported conversion from %s to %s for outgoing data\n",
+                         prec->name, epicsTypeString(value), variantTypeString(incomingData.type()));
+            (void) recGblSetSevr(prec, WRITE_ALARM, INVALID_ALARM);
+        }
+        if (ret != 0) {
+            errlogPrintf("%s : value out of range\n",
                          prec->name);
             (void) recGblSetSevr(prec, WRITE_ALARM, INVALID_ALARM);
         }
 
-        dbgWriteScalar();
+        if (ret == 0)
+            dbgWriteScalar();
         return ret;
     }
 
     // Write array value for EPICS String / OpcUa_String
     long
-    writeArray (const char **value, const epicsUInt32 len,
+    writeArray (const char *value, epicsUInt32 len,
                 const epicsUInt32 num,
                 OpcUa_BuiltInType targetType,
                 dbCommon *prec);

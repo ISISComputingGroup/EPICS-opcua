@@ -79,15 +79,12 @@ OPEN62541_USE_XMLPARSER = YES'''.format(installdir))
     if cue.ci['os'] == 'windows':
         if cue.ci['compiler'] == 'gcc':
             generator = 'MinGW Makefiles'
-        elif cue.ci['compiler'] == 'vs2019':
-            generator = 'Visual Studio 16 2019'
+        elif cue.ci['compiler'] == 'vs2022':
+            generator = 'Visual Studio 17 2022'
 
     build_shared = 'ON'
     if cue.ci['static']:
         build_shared = 'OFF'
-
-    if ver[0] == '1' and ver[1] == '3':
-        sp.check_call(['patch', '-p1', '-i', os.path.join(curdir, '.ci-local', 'open62541-1.3.patch')], cwd=sdkdir)
 
     sp.check_call(['cmake', '..',
                    '-G', generator,
