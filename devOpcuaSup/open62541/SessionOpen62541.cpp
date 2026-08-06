@@ -15,7 +15,6 @@
 #include "SessionOpen62541.h"
 #include "SubscriptionOpen62541.h"
 #include "DataElementOpen62541.h"
-#include "ItemOpen62541.h"
 #include "linkParser.h"
 
 #ifdef HAS_XMLPARSER
@@ -46,9 +45,8 @@
 #include <string>
 #include <map>
 #include <algorithm>
-#include <utility>
-#include <limits>
 #include <functional>
+#include <utility>
 #include <cstdio>
 
 /* loadFile helper from open62541 examples */
@@ -107,7 +105,7 @@ operator << (std::ostream& os, const UA_Variant &ua_variant)
     if (ua_variant.type == nullptr) return os << "NO_TYPE";
     UA_String s = UA_STRING_NULL;
     if (UA_Variant_isScalar(&ua_variant)) {
-        if (ua_variant.type == &UA_TYPES[UA_TYPES_DATETIME]) {
+        if (ua_variant.type->typeKind == UA_DATATYPEKIND_DATETIME) {
             // UA_print does not correct printed time for time zone
             UA_Int64 tOffset = UA_DateTime_localTimeUtcOffset();
             UA_DateTime dt = *static_cast<UA_DateTime*>(ua_variant.data);
@@ -116,7 +114,16 @@ operator << (std::ostream& os, const UA_Variant &ua_variant)
         } else {
             UA_print(ua_variant.data, ua_variant.type, &s);
         }
-        os << s << " (" << ua_variant.type->typeName << ')';
+        os << s << " (";
+        switch (ua_variant.type->typeKind) {
+            case UA_DATATYPEKIND_ENUM:
+            case UA_DATATYPEKIND_UNION:
+            case UA_DATATYPEKIND_STRUCTURE:
+            case UA_DATATYPEKIND_OPTSTRUCT:
+                os << typeKindName(ua_variant.type->typeKind) << ' ';
+                break;
+        }
+        os << ua_variant.type->typeName << ')';
     } else {
         os << s << '{';
         char* data = static_cast<char*>(ua_variant.data);
@@ -127,7 +134,16 @@ operator << (std::ostream& os, const UA_Variant &ua_variant)
             os << s;
             UA_String_clear(&s);
         }
-        os << s << "} (" << ua_variant.type->typeName
+        os << s << "} (";
+        switch (ua_variant.type->typeKind) {
+            case UA_DATATYPEKIND_ENUM:
+            case UA_DATATYPEKIND_UNION:
+            case UA_DATATYPEKIND_STRUCTURE:
+            case UA_DATATYPEKIND_OPTSTRUCT:
+                os << typeKindName(ua_variant.type->typeKind) << ' ';
+                break;
+        }
+        os << ua_variant.type->typeName
            << '[' << ua_variant.arrayLength << "])";
     }
     UA_String_clear(&s);
@@ -138,8 +154,9 @@ inline static std::ostream&
 operator << (std::ostream& os, UA_SecureChannelState channelState)
 {
     switch (channelState) {
+#if UA_OPEN62541_VER_MAJOR*100+UA_OPEN62541_VER_MINOR < 104
         case UA_SECURECHANNELSTATE_FRESH:               return os << "Fresh";
-#if UA_OPEN62541_VER_MAJOR*100+UA_OPEN62541_VER_MINOR >= 104
+#else
         case UA_SECURECHANNELSTATE_REVERSE_LISTENING:   return os << "ReverseListening";
         case UA_SECURECHANNELSTATE_CONNECTING:          return os << "Connecting";
         case UA_SECURECHANNELSTATE_CONNECTED:           return os << "Connected";
@@ -220,15 +237,16 @@ operator != (const std::string& str, const UA_String& ua_string)
     return !(str == ua_string);
 }
 
-inline std::string&
-operator += (std::string& str, const UA_String& ua_string)
+inline std::string
+to_string (const UA_String& ua_string)
 {
-    return str.append(reinterpret_cast<const char*>(ua_string.data), ua_string.length);
+    return std::string(reinterpret_cast<const char*>(ua_string.data), ua_string.length);
 }
 
-const char* typeKindName(UA_UInt32 typeKind)
+const char* typeKindName(int typeKind)
 {
     static const char* typeKindNames[] = {
+        "None",
         "Boolean",
         "SByte",
         "Byte",
@@ -262,8 +280,8 @@ const char* typeKindName(UA_UInt32 typeKind)
         "BitfieldCluster",
         "???"
     };
-    if (typeKind > 31) typeKind = 31;
-    return typeKindNames[typeKind];
+    if (typeKind < -1 || typeKind > 31) typeKind = 31;
+    return typeKindNames[typeKind+1];
 }
 
 
@@ -327,6 +345,9 @@ SessionOpen62541::SessionOpen62541 (const std::string &name,
     , channelState(UA_SECURECHANNELSTATE_CLOSED)
     , sessionState(UA_SESSIONSTATE_CLOSED)
     , connectStatus(UA_STATUSCODE_BADINVALIDSTATE)
+    , needsInit(false)
+    , MaxNodesPerRead(0)
+    , MaxNodesPerWrite(0)
     , workerThread(nullptr)
 {
     sessions.insert({name, this});
@@ -391,12 +412,18 @@ SessionOpen62541::setOption (const std::string &name, const std::string &value)
         debug = ul;
         UA_ClientConfig *config = UA_Client_getConfig(client);
         if (config) {
-            // Loglevels:  0:trace, 1:debug, 2:info, 3:warning, 4:error, 5:fatal (and higher)
-            // Our debug=0 shall only print fatal errors.
-            // After that, the higher debug the lower UA_LogLevel, down to 0.
+            // Starting from v1.4, the UA_LogLevel enum has changed numerical values
+            UA_LogLevel loglevel = static_cast<UA_LogLevel>(std::max(
+                UA_LOGLEVEL_TRACE,
+                static_cast<UA_LogLevel>(UA_LOGLEVEL_FATAL - (UA_LOGLEVEL_DEBUG - UA_LOGLEVEL_TRACE) * debug)));
+#if UA_OPEN62541_VER_MAJOR * 100 + UA_OPEN62541_VER_MINOR < 104
             if (config->logger.clear)
-                config->logger.clear(config->logger.context); // Use context as opaque handle only!
-            config->logger = UA_Log_Stdout_withLevel(static_cast<UA_LogLevel>(std::max(0, 5-debug)));
+                config->logger.clear(config->logger.context);
+            config->logger = UA_Log_Stdout_withLevel(loglevel);
+#else
+            if (config->logging)
+                *(config->logging) = UA_Log_Stdout_withLevel(loglevel);
+#endif
         }
     } else if (name == "batch-nodes") {
         errlogPrintf("DEPRECATED: option 'batch-nodes'; use 'nodes-max' instead\n");
@@ -461,6 +488,7 @@ SessionOpen62541::setOption (const std::string &name, const std::string &value)
 long
 SessionOpen62541::connect (bool manual)
 {
+    Guard G(clientlock);
     if (isConnected()) {
         if (debug || manual)
             std::cerr << "Session " << name
@@ -469,9 +497,6 @@ SessionOpen62541::connect (bool manual)
                     << std::endl;
         return 0;
     }
-
-    if (client)
-        disconnect(); // Do a proper disconnection before attempting to reconnect
 
     setupClientSecurityInfo(securityInfo, &name, debug);
 
@@ -484,19 +509,29 @@ SessionOpen62541::connect (bool manual)
             return -1;
         }
     }
+    // client is guaranteed to be non-NULL at this point, same for config
     UA_ClientConfig *config = UA_Client_getConfig(client);
-    if (debug < 5) {
-        if (config->logger.clear)
-            config->logger.clear(config->logger.context);
-        config->logger = UA_Log_Stdout_withLevel(static_cast<UA_LogLevel>(std::max(0, 5-debug)));
-    }
+
+    // Starting from v1.4, the UA_LogLevel enum has changed numerical values
+    UA_LogLevel loglevel = static_cast<UA_LogLevel>(
+        std::max(UA_LOGLEVEL_TRACE,
+                 static_cast<UA_LogLevel>(UA_LOGLEVEL_FATAL - (UA_LOGLEVEL_DEBUG - UA_LOGLEVEL_TRACE) * debug)));
+#if UA_OPEN62541_VER_MAJOR * 100 + UA_OPEN62541_VER_MINOR < 104
+    if (config->logger.clear)
+        config->logger.clear(config->logger.context);
+    config->logger = UA_Log_Stdout_withLevel(loglevel);
+#else
+    if (config->logging)
+        *(config->logging) = UA_Log_Stdout_withLevel(loglevel);
+#endif
+
 #ifdef HAS_SECURITY
     // We need the client certificate before UA_ClientConfig_setDefaultEncryption
     UA_ClientConfig_setDefaultEncryption(config,
         securityInfo.clientCertificate, securityInfo.privateKey,
         NULL, 0, NULL, 0);
 
-#ifdef __linux__ /* UA_CertificateVerification_CertFolders supported only for Linux so far */
+    #ifdef __linux__ /* UA_CertificateVerification_CertFolders supported only for Linux so far */
     if (securityCertificateTrustListDir.length() ||
         securityIssuersCertificatesDir.length()) {
         if (debug) {
@@ -513,10 +548,11 @@ SessionOpen62541::connect (bool manual)
             errlogPrintf("OPC UA session %s: setting up PKI context failed with status %s\n",
                          name.c_str(), UA_StatusCode_name(status));
     }
-#endif // #ifdef __linux__
+    #endif // #ifdef __linux__
 #else // #ifdef HAS_SECURITY
     UA_ClientConfig_setDefault(config);
 #endif
+
     config->clientDescription.applicationType = UA_APPLICATIONTYPE_CLIENT;
     config->clientDescription.applicationName = UA_LOCALIZEDTEXT_ALLOC("en-US", "EPICS IOC");
     config->clientDescription.productUri = UA_STRING_ALLOC("urn:EPICS:IOC");
@@ -587,26 +623,30 @@ SessionOpen62541::connect (bool manual)
 long
 SessionOpen62541::disconnect ()
 {
-    if (!client) {
-        if (debug)
-            std::cerr << "Session " << name
-                    << " already disconnected"
-                    << std::endl;
-        return 0;
-    }
     {
         Guard G(clientlock);
-        if(!client) return 0;
-        clearCustomTypeDictionaries();
-        UA_Client_delete(client); // This also deletes all open62541 subscriptions
-        client = nullptr;
+        if (client) {
+            clearCustomTypeDictionaries();
+            UA_Client_disconnect(client);
+            UA_Client_delete(client); // This also deletes all open62541 subscriptions
+            client = nullptr;
+        }
+        sessionState = UA_SESSIONSTATE_CLOSED;
+        channelState = UA_SECURECHANNELSTATE_CLOSED;
+        markConnectionLoss();
     }
+
     // Worker thread terminates when client was destroyed
     if (workerThread) {
-        workerThread->exitWait();
-        delete workerThread;
-        workerThread = nullptr;
+        if (epicsThreadGetIdSelf() != workerThread->getId()) {
+            workerThread->exitWait();
+            delete workerThread;
+            workerThread = nullptr;
+        } else {
+            // Called from worker thread itself: it will exit by itself
+        }
     }
+
     return 0;
 }
 
@@ -639,16 +679,20 @@ SessionOpen62541::processRequests (std::vector<std::shared_ptr<ReadRequest>> &ba
     UA_ReadRequest_init(&request);
     request.maxAge = 0;
     request.timestampsToReturn = UA_TIMESTAMPSTORETURN_BOTH;
-    request.nodesToReadSize = batch.size();
-    request.nodesToRead = static_cast<UA_ReadValueId*>(UA_Array_new(batch.size(), &UA_TYPES[UA_TYPES_READVALUEID]));
+    request.nodesToRead = static_cast<UA_ReadValueId*>(
+        UA_Array_new(batch.size() * no_of_properties_read, &UA_TYPES[UA_TYPES_READVALUEID]));
 
     UA_UInt32 i = 0;
     for (auto c : batch) {
+        UA_NodeId_copy(&c->item->getNodeId(), &request.nodesToRead[i].nodeId);
+        request.nodesToRead[i].attributeId = UA_ATTRIBUTEID_DATATYPE;
+        i++;
         UA_NodeId_copy(&c->item->getNodeId(), &request.nodesToRead[i].nodeId);
         request.nodesToRead[i].attributeId = UA_ATTRIBUTEID_VALUE;
         itemsToRead->push_back(c->item);
         i++;
     }
+    request.nodesToReadSize = i;
 
     {
         Guard G(clientlock);
@@ -864,8 +908,7 @@ SessionOpen62541::updateNamespaceMap(const UA_String *nsArray, UA_UInt16 nsCount
     if (namespaceMap.size()) {
         nsIndexMap.clear();
         for (UA_UInt16 i = 0; i < nsCount; i++) {
-            std::string ns;
-            ns += nsArray[i];
+            std::string ns = to_string(nsArray[i]);
             auto it = namespaceMap.find(ns);
             if (it != namespaceMap.end())
                 nsIndexMap.insert({it->second, i});
@@ -945,8 +988,7 @@ SessionOpen62541::showSecurity ()
                 }
 
                 for (size_t k = 0; k < endpointDescriptionsLength; k++) {
-                    if (std::string(reinterpret_cast<const char*>(endpointDescriptions[k].endpointUrl.data),
-                        endpointDescriptions[k].endpointUrl.length).compare(0, 7, "opc.tcp") == 0) {
+                    if (to_string(endpointDescriptions[k].endpointUrl).compare(0, 7, "opc.tcp") == 0) {
                         char dash = '-';
                         std::string marker;
                         if (isConnected()
@@ -1042,8 +1084,7 @@ SessionOpen62541::setupSecurity ()
             int selectedSecurityLevel = -1;
             int selectedEndpoint = -1;
             for (size_t k = 0; k < endpointDescriptionsLength; k++) {
-                if (std::string(reinterpret_cast<const char*>(endpointDescriptions[k].endpointUrl.data),
-                        endpointDescriptions[k].endpointUrl.length).compare(0, 7, "opc.tcp") == 0) {
+                if (to_string(endpointDescriptions[k].endpointUrl).compare(0, 7, "opc.tcp") == 0) {
                     if (reqSecurityMode == RequestedSecurityMode::Best ||
                         OpcUaSecurityMode(reqSecurityMode) == endpointDescriptions[k].securityMode) {
                         if (reqSecurityPolicyUri.find("#None") != std::string::npos ||
@@ -1391,7 +1432,12 @@ SessionOpen62541::setupIdentity()
                                 name.c_str());
                 } else {
                     UA_StatusCode status = config->certificateVerification.verifyCertificate(
-                        config->certificateVerification.context, &cert);
+#if UA_OPEN62541_VER_MAJOR*100+UA_OPEN62541_VER_MINOR < 104
+                        config->certificateVerification.context,
+#else
+                        &config->certificateVerification,
+#endif
+                        &cert);
                     if (UA_STATUS_IS_BAD(connectStatus)) {
                         errlogPrintf("OPC UA session %s: identity certificate is not valid: %s\n",
                                     name.c_str(), UA_StatusCode_name(status));
@@ -1459,6 +1505,10 @@ SessionOpen62541::run ()
             return;
         }
         status = UA_Client_run_iterate(client, 1);
+        if (needsInit) {
+            initializeSession();
+            needsInit = false;
+        }
         {
             UnGuard U(G);
             epicsThreadSleep(0.01); // give other threads a chance to execute
@@ -1526,6 +1576,18 @@ SessionOpen62541::getTypeIndexByName(UA_UInt16 nsIndex, const char* typeName)
     return UnknownType;
 }
 
+// Wrapper to use lambda with capture in C callback
+struct LambdaHolder {
+    std::function<UA_StatusCode(const UA_NodeId&, UA_Boolean, const UA_NodeId&, void*)> func;
+};
+
+static UA_StatusCode iteratorCallbackAdapter(UA_NodeId childId, UA_Boolean isInverse,
+                              UA_NodeId referenceTypeId, void *handle)
+{
+    LambdaHolder *holder = static_cast<LambdaHolder*>(handle);
+    return holder->func(childId, isInverse, referenceTypeId, handle);
+}
+
 void
 SessionOpen62541::readCustomTypeDictionaries()
 {
@@ -1533,6 +1595,16 @@ SessionOpen62541::readCustomTypeDictionaries()
     UA_ClientConfig *config = UA_Client_getConfig(client);
     if (debug)
         std::cout << "Session " << name
+                  << ": reading Enums"
+                  << std::endl;
+    UA_Client_forEachChildNodeCall(client, UA_NODEID_NUMERIC(0, UA_NS0ID_ENUMERATION),
+        [] (UA_NodeId childNodeId, UA_Boolean isInverse, UA_NodeId referenceTypeId, void *handle)
+        {
+            return static_cast<SessionOpen62541*>(handle)->
+                enumIteratorCallback(childNodeId, referenceTypeId);
+        }, this);
+    if (debug)
+        std::cout << "\nSession " << name
                   << ": reading type dictionaries"
                   << std::endl;
     UA_Client_forEachChildNodeCall(client, UA_NODEID_NUMERIC(0, UA_NS0ID_OPCBINARYSCHEMA_TYPESYSTEM),
@@ -1637,30 +1709,123 @@ SessionOpen62541::clearCustomTypeDictionaries()
 }
 
 UA_StatusCode
+SessionOpen62541::enumIteratorCallback(const UA_NodeId& childId, const UA_NodeId& referenceTypeId)
+{
+    UA_StatusCode status = UA_STATUSCODE_GOOD;
+    UA_QualifiedName typeName;
+    UA_QualifiedName_init(&typeName);
+    UA_Client_readBrowseNameAttribute(client, childId, &typeName);
+    UA_NodeId binaryEncodingId = UA_NODEID_NULL;
+    UA_NodeId_copy(&childId, &binaryEncodingId);
+    if (debug >= 4)
+        std::cout << "\nEnum " << typeName
+                  << " { # binaryEncodingId: " << binaryEncodingId
+                  << std::endl;
+    EnumChoices enumChoices;
+    LambdaHolder holder;
+    holder.func = [&enumChoices, this] (UA_NodeId childNodeId, UA_Boolean isInverse, UA_NodeId referenceTypeId, void *handle)
+    {
+        return this->enumChoiceIteratorCallback(childNodeId, referenceTypeId, enumChoices);
+    };
+    status = UA_Client_forEachChildNodeCall(client, childId, iteratorCallbackAdapter, &holder);
+    if (debug >= 4)
+        std::cout << "};" << std::endl;
+    if (enumChoices.size() > 0) {
+        if (debug >= 5)
+            std::cout << "# adding enum " << typeName << " to known types" << std::endl;
+        enumTypes.emplace(binaryEncodingId, std::move(enumChoices));
+        binaryTypeIds.emplace(to_string(typeName.name), binaryEncodingId);
+
+        UA_DataType customDataType = {};
+        customDataType.memSize = sizeof(UA_UInt32);
+        customDataType.typeKind = UA_DATATYPEKIND_ENUM;
+        customDataType.pointerFree = true;
+        customDataType.overlayable = UA_BINARY_OVERLAYABLE_INTEGER;
+#ifndef UA_DATATYPES_USE_POINTER
+        customDataType.typeIndex = static_cast<UA_UInt16>(customTypes.size());
+#endif
+        UA_NodeId_copy(&binaryEncodingId, &customDataType.binaryEncodingId);
+        UA_NodeId_copy(&binaryEncodingId, &customDataType.typeId);
+        char* ctypeName = static_cast<char*>(calloc(typeName.name.length+1, 1));
+        if (!customDataType.typeName) {
+            status = UA_STATUSCODE_BADOUTOFMEMORY;
+        } else {
+            strncpy(ctypeName, reinterpret_cast<char*>(typeName.name.data), typeName.name.length);
+            customDataType.typeName = ctypeName;
+            customTypes.push_back(customDataType);
+        }
+    }
+
+    UA_QualifiedName_clear(&typeName);
+    return status;
+}
+
+UA_StatusCode
+SessionOpen62541::enumChoiceIteratorCallback(const UA_NodeId& childId, const UA_NodeId& referenceTypeId, EnumChoices& enumChoices)
+{
+    UA_StatusCode status = UA_STATUSCODE_GOOD;
+    const UA_NodeId hasProperty = UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY);
+
+    if (UA_NodeId_equal(&referenceTypeId, &hasProperty))
+    {
+        UA_Variant value;
+        UA_Variant_init(&value);
+        UA_Client_readValueAttribute(client, childId, &value);
+        if (UA_Variant_hasArrayType(&value, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]))
+        {
+            UA_LocalizedText* choices = static_cast<UA_LocalizedText*>(value.data);
+            for (size_t i = 0; i < value.arrayLength; i++) {
+                if (debug >= 4)
+                    std::cout << "  " << i << " = " << choices[i].text << ';' << std::endl;
+                enumChoices.emplace(static_cast<epicsInt32>(i), to_string(choices[i].text));
+            }
+        }
+        else if (UA_Variant_hasArrayType(&value, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]))
+        {
+            UA_ExtensionObject* choices = static_cast<UA_ExtensionObject*>(value.data);
+            for (size_t i = 0; i < value.arrayLength; i++) {
+                if (choices[i].encoding == UA_EXTENSIONOBJECT_DECODED &&
+                    choices[i].content.decoded.type == &UA_TYPES[UA_TYPES_ENUMVALUETYPE])
+                {
+                    UA_EnumValueType *enumValue = static_cast<UA_EnumValueType*>(choices[i].content.decoded.data);
+                    if (debug >= 4)
+                        std::cout << "  " << enumValue->value << " = " << enumValue->displayName.text << ';' << std::endl;
+                    enumChoices.emplace(static_cast<epicsInt32>(enumValue->value),
+                        to_string(enumValue->displayName.text));
+                }
+            }
+        }
+        UA_Variant_clear(&value);
+    }
+    return status;
+}
+
+UA_StatusCode
 SessionOpen62541::typeSystemIteratorCallback(const UA_NodeId& dictNodeId)
 {
     UA_QualifiedName dictName;
     UA_QualifiedName_init(&dictName);
+    if (debug) {
+        // Show the dict name in debug messages
+        UA_Client_readBrowseNameAttribute(client, dictNodeId, &dictName);
+    }
 
     if (dictNodeId.namespaceIndex == 0) { // custom type dictionaries only
         if (debug) {
-            UA_Client_readBrowseNameAttribute(client, dictNodeId, &dictName);
             std::cout << "Session " << name
-                  << ": ignoring types of system dict " << dictNodeId
-                  << " " << dictName
-                  << std::endl;
+                      << ": ignoring system dict " << dictName
+                      << std::endl;
+            UA_QualifiedName_clear(&dictName);
         }
         return UA_STATUSCODE_GOOD;
     }
 
     if (debug) {
-        UA_Client_readBrowseNameAttribute(client, dictNodeId, &dictName);
         std::cout << "Session " << name
-                  << ": browsing types of custom dict " << dictNodeId
-                  << " " << dictName
+                  << ": browsing custom dict " << dictName
+                  << " for binary encoding IDs"
                   << std::endl;
     }
-    UA_QualifiedName_clear(&dictName);
 
     // Browse the dictionary for binaryTypeIds
     UA_Client_forEachChildNodeCall(client, dictNodeId,
@@ -1676,6 +1841,11 @@ SessionOpen62541::typeSystemIteratorCallback(const UA_NodeId& dictNodeId)
     UA_Client_readValueAttribute(client, dictNodeId, &xmldata);
     if (UA_Variant_hasScalarType(&xmldata, &UA_TYPES[UA_TYPES_BYTESTRING])) {
         UA_ByteString* xmlstring = static_cast<UA_ByteString*>(xmldata.data);
+        if (debug >= 5)
+            std::cout << "\nSession " << name
+                      << ": Data type XML of dict " << dictName
+                      << '\n' << *xmlstring
+                      << std::endl;
         xmlDocPtr xmldoc = xmlReadMemory(reinterpret_cast<const char*>(xmlstring->data),
             static_cast<int>(xmlstring->length), NULL, NULL, 0);
         if (xmldoc) {
@@ -1684,19 +1854,8 @@ SessionOpen62541::typeSystemIteratorCallback(const UA_NodeId& dictNodeId)
         }
     }
     UA_Variant_clear(&xmldata);
+    UA_QualifiedName_clear(&dictName);
     return UA_STATUSCODE_GOOD;
-}
-
-// Wrapper to use lambda with capture in C callback
-struct LambdaHolder {
-    std::function<UA_StatusCode(const UA_NodeId&, UA_Boolean, const UA_NodeId&, void*)> func;
-};
-
-static UA_StatusCode iteratorCallbackAdapter(UA_NodeId childId, UA_Boolean isInverse,
-                              UA_NodeId referenceTypeId, void *handle)
-{
-    LambdaHolder *holder = static_cast<LambdaHolder*>(handle);
-    return holder->func(childId, isInverse, referenceTypeId, handle);
 }
 
 UA_StatusCode
@@ -1710,6 +1869,10 @@ SessionOpen62541::dictIteratorCallback(const UA_NodeId& childId, const UA_NodeId
         UA_QualifiedName typeName;
         UA_QualifiedName_init(&typeName);
         UA_Client_readBrowseNameAttribute(client, childId, &typeName);
+        if (debug >= 5)
+            std::cout << "Session " << name
+                      << ": type " << childId << " = " << typeName
+                      << std::endl;
         LambdaHolder holder;
         holder.func = [&typeName, this] (UA_NodeId childNodeId, UA_Boolean isInverse, UA_NodeId referenceTypeId, void *handle)
         {
@@ -1757,9 +1920,7 @@ SessionOpen62541::typeIteratorCallback(const UA_NodeId& childId, const UA_NodeId
         // Need copy because content of non-numeric (e.g. string) childId is freed after this function returns
         UA_NodeId binaryEncodingId = UA_NODEID_NULL;
         UA_NodeId_copy(&childId, &binaryEncodingId);
-        binaryTypeIds.emplace(
-            std::string(reinterpret_cast<const char*>(typeName.name.data), typeName.name.length),
-            binaryEncodingId);
+        binaryTypeIds.emplace(to_string(typeName.name), binaryEncodingId);
     }
     return UA_STATUSCODE_GOOD;
 }
@@ -1810,19 +1971,19 @@ SessionOpen62541::parseCustomDataTypes(xmlNode* node, UA_UInt16 nsIndex)
             break;
         }
 
+        auto binaryType = binaryTypeIds.find(typeName);
+        if (binaryType == binaryTypeIds.end()) {
+            if (debug)
+                std::cerr << "Session " << name
+                          << ": Ignoring type " << typeName
+                          << " which has no binaryEncodingId" << std::endl;
+            continue;
+        }
+        UA_NodeId_copy(&binaryType->second, &customDataType.binaryEncodingId);
+
         if (strcmp(nodeKind, "StructuredType") == 0) {
             UA_UInt32 structureAlignment = 0;
             UA_UInt32 memberSize;
-
-            auto binaryType = binaryTypeIds.find(typeName);
-            if (binaryType == binaryTypeIds.end()) {
-                if (debug)
-                    std::cerr << "Session " << name
-                              << ": Ignoring type " << typeName
-                              << " which has no binaryEncodingId" << std::endl;
-                continue;
-            }
-            UA_NodeId_copy(&binaryType->second, &customDataType.binaryEncodingId);
 
             const char* baseType = getProp(node, "BaseType");
             if (baseType && strcmp(baseType, "ua:Union") == 0)
@@ -2133,9 +2294,10 @@ SessionOpen62541::parseCustomDataTypes(xmlNode* node, UA_UInt16 nsIndex)
             customDataType.overlayable = UA_BINARY_OVERLAYABLE_INTEGER;
 
             if (debug >= 4)
-                std::cout << "\nenum " << typeName << " {"
+                std::cout << "\nEnum " << typeName
+                          << " { # binaryEncodingId: " << customDataType.binaryEncodingId
                           << std::endl;
-            std::vector<std::pair<int64_t,std::string>> choices;
+            EnumChoices enumChoices;
             for (xmlNode* choice = node->children; choice; choice = choice->next) {
                 if (choice->type != XML_ELEMENT_NODE)
                     continue;
@@ -2154,10 +2316,10 @@ SessionOpen62541::parseCustomDataTypes(xmlNode* node, UA_UInt16 nsIndex)
                 const char* choiceName = getProp(choice, "Name");
                 const char* choiceValue = getProp(choice, "Value");
                 if (debug >= 4)
-                    std::cout << "  " << choiceName << " = " << choiceValue << ';' << std::endl;
-                choices.emplace_back(static_cast<int64_t>(atoll(choiceValue)), choiceName);
+                    std::cout << "  " << choiceValue << " = " << choiceName << ';' << std::endl;
+                enumChoices.emplace(atol(choiceValue), choiceName);
             }
-            enumTypes.emplace(typeName, std::move(choices));
+            enumTypes.emplace(customDataType.binaryEncodingId, std::move(enumChoices));
             if (debug >= 4)
                 std::cout << "};" << std::endl;
         }
@@ -2166,11 +2328,27 @@ SessionOpen62541::parseCustomDataTypes(xmlNode* node, UA_UInt16 nsIndex)
         if (typeName) {
             if (debug >= 5)
                 std::cout << "# adding type " << typeName << " to known types" << std::endl;
-            customDataType.typeId = UA_NODEID_STRING(nsIndex, const_cast<char*>(typeName));
+            UA_NodeId_copy(&customDataType.binaryEncodingId, &customDataType.typeId);
             customDataType.typeName = strdup(typeName);
             customTypes.push_back(customDataType);
         }
     }
+}
+
+const EnumChoices*
+SessionOpen62541::getEnumChoices(const UA_NodeId* typeId)
+{
+    Guard G(clientlock);
+    if (client && typeId) {
+        const UA_DataType* type = UA_Client_findDataType(client, typeId);
+        if (type && type->typeKind == UA_DATATYPEKIND_ENUM)
+        {
+            auto enumChoices = enumTypes.find(*typeId);
+            if (enumChoices != enumTypes.end())
+                return &enumChoices->second;
+        }
+    }
+    return nullptr;
 }
 
 void
@@ -2184,12 +2362,10 @@ SessionOpen62541::showCustomDataTypes(int level) const
             std::cout << " {";
             if (type.typeKind == UA_DATATYPEKIND_ENUM)
             {
-                for (auto choice: enumTypes.find(type.typeName)->second)
-                {
-                    std::cout << "\n    " << choice.second << " = " << choice.first;
-                }
+                for (auto it: enumTypes.at(type.typeId))
+                    std::cout << "\n    " << it.first << " = " << it.second;
             } else
-            for (size_t i = 0; i < type.membersSize; i++) {
+            for (UA_UInt32 i = 0; i < type.membersSize; i++) {
                 UA_DataTypeMember member = type.members[i];
                 const UA_DataType& memberType =
 #ifdef UA_DATATYPES_USE_POINTER
@@ -2250,13 +2426,9 @@ SessionOpen62541::connectionStatusChanged (
                 // Deactivated by user or server shut down
                 markConnectionLoss();
                 registeredItemsNo = 0;
-                break;
-            case UA_SECURECHANNELSTATE_FRESH:
-                if (sessionState == UA_SESSIONSTATE_CREATED) {
-                    // The server has shut down
-                    if (autoConnect)
-                        autoConnector.start();
-                }
+                // The server has shut down
+                if (autoConnect)
+                    autoConnector.start();
                 break;
             case UA_SECURECHANNELSTATE_OPEN: {
                 // Connection to server has been established
@@ -2279,98 +2451,21 @@ SessionOpen62541::connectionStatusChanged (
 
             case UA_SESSIONSTATE_ACTIVATED:
             {
-                UA_ClientConfig *config = UA_Client_getConfig(client);
-                config->connectivityCheckInterval = 1000; // 1 sec
+                needsInit = true;
+                break;
+            }
 
-                std::string token;
-                auto type = config->userIdentityToken.content.decoded.type;
-                if (type == &UA_TYPES[UA_TYPES_USERNAMEIDENTITYTOKEN])
-                    token = " (username token)";
-                if (type == &UA_TYPES[UA_TYPES_X509IDENTITYTOKEN])
-                    token = " (certificate token)";
-                std::ostringstream buf;
-                buf << "OPC UA session " << name << ": connected as '" << securityUserName << "'"
-                    << token << " with security level " << securityLevel
-                    << " (mode=" << config->securityMode
-                    << "; policy=" << securityPolicyString(config->securityPolicyUri) << ")"
-                    << std::endl;
-                errlogPrintf("%s", buf.str().c_str());
-                if (config->securityMode == UA_MESSAGESECURITYMODE_NONE) {
-                    errlogPrintf("OPC UA session %s: WARNING - this session uses *** NO SECURITY ***\n",
-                                 name.c_str());
-                }
-
-                // read some settings from server
-                UA_Variant value;
-                UA_StatusCode status;
-                unsigned int max;
-
-                UA_Variant_init(&value);
-
-                // max nodes per read request
-                status = UA_Client_readValueAttribute(client,
-                    UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERCAPABILITIES_OPERATIONLIMITS_MAXNODESPERREAD)
-                    , &value);
-                if (status == UA_STATUSCODE_GOOD && UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_UINT32]))
-                    MaxNodesPerRead = *static_cast<UA_UInt32*>(value.data);
-                UA_Variant_clear(&value);
-                if (MaxNodesPerRead > 0 && readNodesMax > 0)
-                    max = std::min<unsigned int>(MaxNodesPerRead, readNodesMax);
-                else
-                    max = MaxNodesPerRead + readNodesMax;
-                if (max != readNodesMax)
-                    reader.setParams(max, readTimeoutMin, readTimeoutMax);
-
-                // max nodes per write request
-                status = UA_Client_readValueAttribute(client,
-                    UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERCAPABILITIES_OPERATIONLIMITS_MAXNODESPERWRITE)
-                    , &value);
-                if (status == UA_STATUSCODE_GOOD && UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_UINT32]))
-                    MaxNodesPerWrite = *static_cast<UA_UInt32*>(value.data);
-                UA_Variant_clear(&value);
-                if (MaxNodesPerWrite > 0 && writeNodesMax > 0)
-                    max = std::min<unsigned int>(MaxNodesPerWrite, writeNodesMax);
-                else
-                    max = MaxNodesPerWrite + writeNodesMax;
-                if (max != writeNodesMax)
-                    writer.setParams(max, writeTimeoutMin, writeTimeoutMax);
-
-                // namespaces
-                status = UA_Client_readValueAttribute(client,
-                    UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_NAMESPACEARRAY)
-                    , &value);
-                if (status == UA_STATUSCODE_GOOD && UA_Variant_hasArrayType(&value, &UA_TYPES[UA_TYPES_STRING]))
-                    updateNamespaceMap(static_cast<UA_String*>(value.data), static_cast<UA_UInt16>(value.arrayLength));
-                UA_Variant_clear(&value);
-
-                readCustomTypeDictionaries();
-                rebuildNodeIds();
-                registerNodes();
-                createAllSubscriptions();
-                addAllMonitoredItems();
-                if (debug) {
-                    std::cout << "Session " << name
-                              << ": triggering initial read for all "
-                              << items.size() << " items"
-                              << std::endl;
-                }
-                auto cargo = std::vector<std::shared_ptr<ReadRequest>>(items.size());
-                unsigned int i = 0;
-                for (auto it : items) {
-                    it->setState(ConnectionStatus::initialRead);
-                    cargo[i] = std::make_shared<ReadRequest>();
-                    cargo[i]->item = it;
-                    i++;
-                }
-                // status needs to be updated before requests are being issued
-                sessionState = newSessionState;
-                reader.pushRequest(cargo, menuPriorityHIGH);
+            case UA_SESSIONSTATE_CLOSED:
+            case UA_SESSIONSTATE_CLOSING:
+            {
+                needsInit = false;
                 break;
             }
 
             case UA_SESSIONSTATE_CREATED: {
                 if (sessionState == UA_SESSIONSTATE_ACTIVATED)
                     errlogPrintf("OPC UA session %s: disconnected\n", name.c_str());
+                needsInit = false;
                 clearCustomTypeDictionaries();
                 break;
             }
@@ -2397,7 +2492,7 @@ SessionOpen62541::readComplete (UA_UInt32 transactionId,
                       << " (transaction id " << transactionId
                       << "; data for " << response->resultsSize << " items)"
                       << std::endl;
-        if ((*it->second).size() != response->resultsSize)
+        if ((*it->second).size() * no_of_properties_read != response->resultsSize)
             errlogPrintf("OPC UA session %s: (readComplete) received a callback "
                          "with %llu values for a request containing %llu items\n",
                          name.c_str(),
@@ -2408,11 +2503,21 @@ SessionOpen62541::readComplete (UA_UInt32 transactionId,
             if (i >= response->resultsSize) {
                 item->setIncomingEvent(ProcessReason::readFailure);
             } else {
+                const UA_DataType* type = nullptr;
+                if (!UA_STATUS_IS_BAD(response->results[i].status)) {
+                    type = UA_Client_findDataType(client, static_cast<UA_NodeId *>(response->results[i].value.data));
+                }
+                i++;
+                if (typeKindOf(type) == UA_DATATYPEKIND_ENUM  &&
+                    typeKindOf(response->results[i].value.type) == UA_DATATYPEKIND_INT32) {
+                    // Enums arrive as INT32. Tweak the type to what we find in structs for better diagnosics.
+                    response->results[i].value.type = type;
+                }
                 if (debug >= 5) {
                     std::cout << "** Session " << name
                               << ": (readComplete) getting data for item "
                               << item
-                              << " = " << response->results[i].value
+                              << "\" = " << response->results[i].value
                               << ' ' << UA_StatusCode_name(response->results[i].status)
                               << std::endl;
                 }
@@ -2420,8 +2525,8 @@ SessionOpen62541::readComplete (UA_UInt32 transactionId,
                 if (UA_STATUS_IS_BAD(response->results[i].status))
                     reason = ProcessReason::readFailure;
                 item->setIncomingData(response->results[i], reason);
+                i++;
             }
-            i++;
         }
         outstandingOps.erase(it);
     } else {
@@ -2557,10 +2662,97 @@ SessionOpen62541::atExit (void *)
     errlogPrintf("OPC UA: Disconnecting sessions\n");
     for (auto &it : sessions) {
         it.second->disconnect();
-        SessionOpen62541 *session = it.second;
-        if (session->isConnected())
-            session->disconnect();
     }
+}
+
+void
+SessionOpen62541::initializeSession ()
+{
+    if (!client) return;
+    UA_ClientConfig *config = UA_Client_getConfig(client);
+    config->connectivityCheckInterval = 1000; // 1 sec
+
+    std::string token;
+    auto type = config->userIdentityToken.content.decoded.type;
+    if (type == &UA_TYPES[UA_TYPES_USERNAMEIDENTITYTOKEN])
+        token = " (username token)";
+    if (type == &UA_TYPES[UA_TYPES_X509IDENTITYTOKEN])
+        token = " (certificate token)";
+    std::ostringstream buf;
+    buf << "OPC UA session " << name << ": connected as '" << securityUserName << "'"
+        << token << " with security level " << securityLevel
+        << " (mode=" << config->securityMode
+        << "; policy=" << securityPolicyString(config->securityPolicyUri) << ")"
+        << std::endl;
+    errlogPrintf("%s", buf.str().c_str());
+    if (config->securityMode == UA_MESSAGESECURITYMODE_NONE) {
+        errlogPrintf("OPC UA session %s: WARNING - this session uses *** NO SECURITY ***\n",
+                        name.c_str());
+    }
+
+    // read some settings from server
+    UA_Variant value;
+    UA_StatusCode status;
+    unsigned int max;
+
+    UA_Variant_init(&value);
+
+    // max nodes per read request
+    status = UA_Client_readValueAttribute(client,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERCAPABILITIES_OPERATIONLIMITS_MAXNODESPERREAD)
+        , &value);
+    if (status == UA_STATUSCODE_GOOD && UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_UINT32]))
+        MaxNodesPerRead = *static_cast<UA_UInt32*>(value.data);
+    UA_Variant_clear(&value);
+    if (MaxNodesPerRead > 0 && readNodesMax > 0)
+        max = std::min<unsigned int>(MaxNodesPerRead, readNodesMax);
+    else
+        max = MaxNodesPerRead + readNodesMax;
+    if (max != readNodesMax)
+        reader.setParams(max, readTimeoutMin, readTimeoutMax);
+
+    // max nodes per write request
+    status = UA_Client_readValueAttribute(client,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERCAPABILITIES_OPERATIONLIMITS_MAXNODESPERWRITE)
+        , &value);
+    if (status == UA_STATUSCODE_GOOD && UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_UINT32]))
+        MaxNodesPerWrite = *static_cast<UA_UInt32*>(value.data);
+    UA_Variant_clear(&value);
+    if (MaxNodesPerWrite > 0 && writeNodesMax > 0)
+        max = std::min<unsigned int>(MaxNodesPerWrite, writeNodesMax);
+    else
+        max = MaxNodesPerWrite + writeNodesMax;
+    if (max != writeNodesMax)
+        writer.setParams(max, writeTimeoutMin, writeTimeoutMax);
+
+    // namespaces
+    status = UA_Client_readValueAttribute(client,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_NAMESPACEARRAY)
+        , &value);
+    if (status == UA_STATUSCODE_GOOD && UA_Variant_hasArrayType(&value, &UA_TYPES[UA_TYPES_STRING]))
+        updateNamespaceMap(static_cast<UA_String*>(value.data), static_cast<UA_UInt16>(value.arrayLength));
+    UA_Variant_clear(&value);
+
+    readCustomTypeDictionaries();
+    rebuildNodeIds();
+    registerNodes();
+    createAllSubscriptions();
+    if (debug) {
+        std::cout << "Session " << name
+                    << ": triggering initial read for all "
+                    << items.size() << " items"
+                    << std::endl;
+    }
+    auto cargo = std::vector<std::shared_ptr<ReadRequest>>(items.size());
+    unsigned int i = 0;
+    for (auto it : items) {
+        it->setState(ConnectionStatus::initialRead);
+        cargo[i] = std::make_shared<ReadRequest>();
+        cargo[i]->item = it;
+        i++;
+    }
+    reader.pushRequest(cargo, menuPriorityHIGH);
+    addAllMonitoredItems();
 }
 
 } // namespace DevOpcua

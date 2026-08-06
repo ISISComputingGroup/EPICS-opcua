@@ -20,20 +20,25 @@
 #include <cstdlib>
 #include <regex>
 #include <winsock2.h>
+// cannot use : to separate command line arguments as it matches C: in file paths
+#define ARGSEP ';'
+#else
+#define ARGSEP ':'
 #endif
 
 #include <iocsh.h>
 #include <errlog.h>
 #include <epicsThread.h>
 
-#include <epicsExport.h>  // defines epicsExportSharedSymbols
+#include <epicsExport.h> // defines epicsExportSharedSymbols
+
+#include "OpcuaRegistry.h"
+#include "RecordConnector.h"
+#include "Session.h"
+#include "Subscription.h"
 #include "devOpcua.h"
 #include "iocshVariables.h"
 #include "linkParser.h"
-#include "Session.h"
-#include "Subscription.h"
-#include "Registry.h"
-#include "RecordConnector.h"
 
 namespace DevOpcua {
 
@@ -147,7 +152,7 @@ opcuaSessionCallFunc(const iocshArgBuf *args)
 
         std::list<std::pair<std::string, std::string>> setopts;
         for (int i = 1; i < args[2].aval.ac; i++) {
-            auto options = splitString(args[2].aval.av[i], ':');
+            auto options = splitString(args[2].aval.av[i], ARGSEP);
             for (auto &opt : options) {
                 if (opt.empty()) continue;
                 auto keyval = splitString(opt, '=');
@@ -252,7 +257,7 @@ static
 
         std::list<std::pair<std::string, std::string>> setopts;
         for (int i = 1; i < args[3].aval.ac; i++) {
-            auto options = splitString(args[3].aval.av[i], ':');
+            auto options = splitString(args[3].aval.av[i], ARGSEP);
             for (auto &opt : options) {
                 if (opt.empty()) continue;
                 auto keyval = splitString(opt, '=');
@@ -311,7 +316,6 @@ opcuaOptionsCallFunc(const iocshArgBuf *args)
         } else if (strcmp(args[0].sval, "help") == 0) {
             std::cout << opcuaOptionsUsage.c_str() << std::endl;
         } else {
-            std::cerr << args[1].aval.ac << " options: " << args[1].aval.av[0] << std::endl;
             if (args[1].aval.ac <= 1) {
                 errlogPrintf("missing argument #2 (options)\n");
             } else {
@@ -320,7 +324,7 @@ opcuaOptionsCallFunc(const iocshArgBuf *args)
                 if (sessions.size()) {
                     foundSomething = true;
                     for (int i = 1; i < args[1].aval.ac; i++) {
-                        auto options = splitString(args[1].aval.av[i], ':');
+                        auto options = splitString(args[1].aval.av[i], ARGSEP);
                         for (auto &opt : options) {
                             if (opt.empty()) continue;
                             auto keyval = splitString(opt, '=');
@@ -339,7 +343,7 @@ opcuaOptionsCallFunc(const iocshArgBuf *args)
                     if (subscriptions.size()) {
                         foundSomething = true;
                         for (int i = 1; i < args[1].aval.ac; i++) {
-                            auto options = splitString(args[1].aval.av[i], ':');
+                            auto options = splitString(args[1].aval.av[i], ARGSEP);
                             for (auto &opt : options) {
                                 if (opt.empty()) continue;
                                 auto keyval = splitString(opt, '=');
@@ -1107,8 +1111,6 @@ void opcuaIocshRegister ()
     iocshRegister(&opcuaShowDataFuncDef, opcuaShowDataCallFunc);
 }
 
-extern "C" {
-epicsExportRegistrar(opcuaIocshRegister);
-}
-
 } // namespace
+
+extern "C" { epicsExportRegistrar(opcuaIocshRegister); }

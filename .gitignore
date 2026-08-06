@@ -8,6 +8,7 @@
 /include/
 /templates/
 /configure/*.local
+/documentation/build/
 envPaths
 dllPath.bat
 
@@ -23,11 +24,13 @@ dllPath.bat
 /*Top/configure/*.local
 
 O.*/
+.iocsh_history
 /QtC-*
 /.qtc_*
 .idea/
 *.orig
 *.log
+*.autosave
 /devOpcuaSup/.vs/devOpcuaSup/v16
 /devOpcuaSup/x64
 *.sln

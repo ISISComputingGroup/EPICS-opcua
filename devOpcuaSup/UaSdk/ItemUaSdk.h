@@ -24,7 +24,6 @@
 #include <epicsTime.h>
 
 #include "Item.h"
-#include "opcuaItemRecord.h"
 #include "devOpcua.h"
 #include "ElementTree.h"
 #include "SessionUaSdk.h"
@@ -35,6 +34,7 @@ using namespace UaClientSdk;
 
 class SubscriptionUaSdk;
 class DataElementUaSdk;
+class DataElementUaSdkNode;
 struct linkInfo;
 
 /**
@@ -45,6 +45,8 @@ struct linkInfo;
 class ItemUaSdk : public Item
 {
     friend class DataElementUaSdk;
+    friend class DataElementUaSdkNode;
+    friend class DataElementUaSdkLeaf;
 
 public:
     /**
@@ -168,8 +170,9 @@ public:
      *
      * @param value  new value for this data element
      * @param reason  reason for this value update
+     * @param typeId  data type id of the item
      */
-    void setIncomingData(const OpcUa_DataValue &value, ProcessReason reason);
+    void setIncomingData(const OpcUa_DataValue &value, ProcessReason reason, const UaNodeId *typeId = nullptr);
 
     /**
      * @brief Push an incoming event down the root element.
@@ -221,9 +224,11 @@ private:
     bool registered;                       /**< flag for registration status */
     OpcUa_Double revisedSamplingInterval;  /**< server-revised sampling interval */
     OpcUa_UInt32 revisedQueueSize;         /**< server-revised queue size */
-    ElementTree<DataElementUaSdk, ItemUaSdk> dataTree; /**< data element tree */
-    epicsMutex dataTreeWriteLock;           /**< lock for dirty flag */
+    ElementTree<DataElementUaSdkNode, DataElementUaSdk, ItemUaSdk> dataTree; /**< data element tree */
+    epicsMutex dataTreeWriteLock;          /**< lock for dirty flag */
     bool dataTreeDirty;                    /**< true if any element has been modified */
+    unsigned int dataTreeNoOfNodes;        /**< number of nodes */
+    unsigned int dataTreeNoOfLeafs;        /**< number of leafs */
     UaStatusCode lastStatus;               /**< status code of most recent service */
     ProcessReason lastReason;              /**< most recent processing reason */
     epicsTime tsClient;                    /**< client (local) time stamp */

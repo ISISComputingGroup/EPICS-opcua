@@ -23,15 +23,17 @@
 #include <uabase.h>
 #include <uaclientsdk.h>
 #include <uasession.h>
+#include <uaenumdefinition.h>
 
 #include <epicsString.h>
 #include <epicsMutex.h>
 #include <epicsTypes.h>
 #include <initHooks.h>
 
+#include "DataElement.h"
+#include "OpcuaRegistry.h"
 #include "RequestQueueBatcher.h"
 #include "Session.h"
-#include "Registry.h"
 
 namespace DevOpcua {
 
@@ -114,6 +116,14 @@ public:
      * @return session name
      */
     virtual const std::string & getName() const override;
+
+    /**
+     * @brief Get pointer to enumChoices if argument refers to enum type, else nullptr
+     */
+    const EnumChoices* getEnumChoices(const UaEnumDefinition& enumDefinition) const;
+
+    const EnumChoices* getEnumChoices(const UaNodeId* typeId) const
+    { return typeId ? getEnumChoices(puasession->enumDefinition(*typeId)) : nullptr; }
 
     /**
      * @brief Get a structure definition from the session dictionary.

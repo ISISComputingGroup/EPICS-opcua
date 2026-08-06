@@ -1,5 +1,5 @@
 /*************************************************************************\
-* Copyright (c) 2018-2023 ITER Organization.
+* Copyright (c) 2018-2026 ITER Organization.
 * This module is distributed subject to a Software License Agreement found
 * in file LICENSE that is included with this distribution.
 \*************************************************************************/
@@ -17,9 +17,13 @@
 #include "ElementTree.h"
 #include "SessionOpen62541.h"
 
+#include <open62541/client.h>
+
 namespace DevOpcua {
 
+class SubscriptionOpen62541;
 class DataElementOpen62541;
+class DataElementOpen62541Node;
 
 /**
  * @brief The ItemOpen62541 inplementation of an OPC UA item.
@@ -29,6 +33,8 @@ class DataElementOpen62541;
 class ItemOpen62541 : public Item
 {
     friend class DataElementOpen62541;
+    friend class DataElementOpen62541Node;
+    friend class DataElementOpen62541Leaf;
 
 public:
     /**
@@ -94,13 +100,13 @@ public:
      * @brief Setter for the node id of this item.
      * @return node id
      */
-    void setRegisteredNodeId(const UA_NodeId &id) { UA_NodeId_copy(&id, &nodeid); registered = true; }
+    void setRegisteredNodeId(const UA_NodeId &id) { UA_NodeId_copy(&id, &nodeId); registered = true; }
 
     /**
      * @brief Getter that returns the node id of this item.
      * @return node id
      */
-    const UA_NodeId &getNodeId() const { return nodeid; }
+    const UA_NodeId &getNodeId() const { return nodeId; }
 
     /**
      * @brief Setter for the status of a read operation.
@@ -154,7 +160,7 @@ public:
      * @param value  new value for this data element
      * @param reason  reason for this value update
      */
-    void setIncomingData(const UA_DataValue &value, ProcessReason reason);
+    void setIncomingData(UA_DataValue &value, ProcessReason reason);
 
     /**
      * @brief Push an incoming event down the root element.
@@ -202,13 +208,15 @@ public:
 private:
     SubscriptionOpen62541 *subscription;   /**< raw pointer to subscription (if monitored) */
     SessionOpen62541 *session;             /**< raw pointer to session */
-    UA_NodeId nodeid;                      /**< node id of this item */
+    UA_NodeId nodeId;                      /**< node id of this item */
     bool registered;                       /**< flag for registration status */
     UA_Double revisedSamplingInterval;     /**< server-revised sampling interval */
     UA_UInt32 revisedQueueSize;            /**< server-revised queue size */
-    ElementTree<DataElementOpen62541, ItemOpen62541> dataTree; /**< data element tree */
+    ElementTree<DataElementOpen62541Node, DataElementOpen62541, ItemOpen62541> dataTree; /**< data element tree */
     epicsMutex dataTreeWriteLock;          /**< lock for dirty flag */
     bool dataTreeDirty;                    /**< true if any element has been modified */
+    unsigned int dataTreeNoOfNodes;        /**< number of nodes */
+    unsigned int dataTreeNoOfLeafs;        /**< number of leafs */
     UA_StatusCode lastStatus;              /**< status code of most recent service */
     ProcessReason lastReason;              /**< most recent processing reason */
     epicsTime tsClient;                    /**< client (local) time stamp */

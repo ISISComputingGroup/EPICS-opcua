@@ -19,6 +19,7 @@ on:
       - '**/*.md'
       - 'devOpcuaSup/open62541/*'
   pull_request:
+  workflow_dispatch:
 
 env:
   SETUP_PATH: .ci-local:.ci
@@ -44,65 +45,65 @@ jobs:
         include:
 
           # Oldest supported Base 7.x
-          - os: ubuntu-20.04
+          - os: ubuntu-22.04
             cmp: gcc
             configuration: default
             base: "R7.0.4"
             uasdk: "1.6.3"
-            name: "7.0.4 Ub-20 v1.6.3"
+            name: "7.0.4 Ub-22 v1.6.3"
 
-          - os: ubuntu-20.04
+          - os: ubuntu-22.04
             cmp: gcc
             configuration: default
             base: "7.0"
             uasdk: "1.6.3"
-            name: "7.0 Ub-20 v1.6.3"
+            name: "7.0 Ub-22 v1.6.3"
 
           # Oldest supported Base 3.15.x
-          - os: ubuntu-20.04
+          - os: ubuntu-22.04
             cmp: gcc
             configuration: default
-            base: "R3.15.7"
+            base: "R3.15.9"
             uasdk: "1.6.3"
-            name: "3.15.7 Ub-20 v1.6.3"
+            name: "3.15.9 Ub-22 v1.6.3"
 
-          - os: ubuntu-20.04
+          - os: ubuntu-22.04
             cmp: gcc
             configuration: default
             base: "3.15"
             uasdk: "1.6.3"
-            name: "3.15 Ub-20 v1.6.3"
+            name: "3.15 Ub-22 v1.6.3"
 
-          - os: ubuntu-20.04
+          - os: ubuntu-22.04
             cmp: gcc
             configuration: default
             base: "R7.0.4"
             uasdk: "1.7.2"
-            name: "7.0.4 Ub-20 v1.7.2"
+            name: "7.0.4 Ub-22 v1.7.2"
 
-          - os: ubuntu-20.04
+          - os: ubuntu-22.04
             cmp: gcc
             configuration: default
             base: "7.0"
             uasdk: "1.7.2"
-            name: "7.0 Ub-20 v1.7.2"
+            name: "7.0 Ub-22 v1.7.2"
 
-          - os: ubuntu-20.04
+          - os: ubuntu-22.04
             cmp: gcc
             configuration: default
-            base: "R3.15.7"
+            base: "R3.15.9"
             uasdk: "1.7.2"
-            name: "3.15.7 Ub-20 v1.7.2"
+            name: "3.15.9 Ub-22 v1.7.2"
 
-          - os: ubuntu-20.04
+          - os: ubuntu-22.04
             cmp: gcc
             configuration: default
             base: "3.15"
             uasdk: "1.7.2"
-            name: "3.15 Ub-20 v1.7.2"
+            name: "3.15 Ub-22 v1.7.2"
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         submodules: true
     - name: Download and install UASDK client
