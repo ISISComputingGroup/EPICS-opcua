@@ -22,7 +22,7 @@ opcuaIoc_DBD += opcua.dbd
 opcuaIoc_LIBS += opcua
 
 opcuaIoc_LIBS_WIN32 += xml2 iconv libcrypto zlib
-opcuaIoc_SYS_LIBS_WIN32 += crypt32
+opcuaIoc_SYS_LIBS_WIN32 += crypt32 iphlpapi
 
 # opcuaIoc_registerRecordDeviceDriver.cpp derives from opcuaIoc.dbd
 opcuaIoc_SRCS += opcuaIoc_registerRecordDeviceDriver.cpp
